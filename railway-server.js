@@ -6,9 +6,14 @@ const { format, addDays } = require('date-fns');
 const fs = require('fs');
 const https = require('https');
 const FormData = require('form-data');
+const DatabaseManager = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Initialize database
+const db = new DatabaseManager();
+db.seedIfEmpty();
 
 // Middleware
 app.use(cors());
@@ -63,113 +68,20 @@ async function openAIRequest(endpoint, data, isFormData = false) {
   });
 }
 
-// In-memory data store
-const db = {
-  practitioners: [
-    { id: 'p1', name: 'Dr. Sarah Chen', role: 'Senior Physiotherapist', color: '#3b82f6' },
-    { id: 'p2', name: 'Mark Wilson', role: 'Sports Therapist', color: '#10b981' },
-    { id: 'p3', name: 'Emma Thompson', role: 'Massage Therapist', color: '#f59e0b' }
-  ],
-  services: [
-    { id: 's1', name: 'Initial Consultation', duration: 45, price: 75, color: '#3b82f6' },
-    { id: 's2', name: 'Follow-up Session', duration: 30, price: 55, color: '#10b981' },
-    { id: 's3', name: 'Sports Massage', duration: 45, price: 60, color: '#f59e0b' },
-    { id: 's4', name: 'Home Visit', duration: 45, price: 95, color: '#ef4444' }
-  ],
-  patients: [],
-  appointments: [],
-  notes: [],
-  invoices: [],
-  agentActivities: [],
-  messages: []
-};
-
-// Generate sample data
-function generateSampleData() {
-  const firstNames = ['James', 'Emma', 'Oliver', 'Sophie', 'William', 'Isabella', 'Henry', 'Mia', 'Alexander', 'Charlotte', 'Lucas', 'Amelia'];
-  const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Taylor', 'Anderson'];
-  
-  for (let i = 0; i < 25; i++) {
-    const patient = {
-      id: `pat${i + 1}`,
-      firstName: firstNames[Math.floor(Math.random() * firstNames.length)],
-      lastName: lastNames[Math.floor(Math.random() * lastNames.length)],
-      phone: `+447${Math.floor(Math.random() * 1000000000).toString().padStart(9, '0')}`,
-      email: `patient${i + 1}@example.com`,
-      dateOfBirth: new Date(1970 + Math.floor(Math.random() * 40), Math.floor(Math.random() * 12), Math.floor(Math.random() * 28)),
-      status: Math.random() > 0.3 ? 'active' : 'inactive',
-      createdAt: new Date(Date.now() - Math.floor(Math.random() * 365 * 24 * 60 * 60 * 1000))
-    };
-    db.patients.push(patient);
-  }
-
-  const today = new Date();
-  for (let i = 0; i < 40; i++) {
-    const dayOffset = Math.floor(Math.random() * 14) - 2;
-    const hour = 8 + Math.floor(Math.random() * 10);
-    const practitioner = db.practitioners[Math.floor(Math.random() * db.practitioners.length)];
-    const service = db.services[Math.floor(Math.random() * db.services.length)];
-    const patient = db.patients[Math.floor(Math.random() * db.patients.length)];
-    
-    const appointment = {
-      id: `apt${i + 1}`,
-      patientId: patient.id,
-      practitionerId: practitioner.id,
-      serviceId: service.id,
-      date: format(addDays(today, dayOffset), 'yyyy-MM-dd'),
-      time: `${hour.toString().padStart(2, '0')}:00`,
-      duration: service.duration,
-      status: dayOffset < 0 ? 'completed' : (Math.random() > 0.85 ? 'cancelled' : 'confirmed'),
-      notes: Math.random() > 0.5 ? 'Sample notes' : '',
-      createdAt: new Date()
-    };
-    db.appointments.push(appointment);
-  }
-
-  const agentTypes = ['scheduling', 'documentation', 'patient_comms', 'billing', 'intelligence'];
-  const actions = [
-    'Booked appointment via voice AI',
-    'Generated SOAP note from session',
-    'Sent appointment reminder',
-    'Created invoice',
-    'Answered patient question',
-    'Filled cancellation from waitlist',
-    'Chased overdue payment',
-    'Identified at-risk patient',
-    'Optimised practitioner schedule',
-    'Generated weekly report'
-  ];
-
-  for (let i = 0; i < 30; i++) {
-    db.agentActivities.push({
-      id: `act${i + 1}`,
-      agentType: agentTypes[Math.floor(Math.random() * agentTypes.length)],
-      action: actions[Math.floor(Math.random() * actions.length)],
-      patientId: db.patients[Math.floor(Math.random() * db.patients.length)].id,
-      timestamp: new Date(Date.now() - Math.floor(Math.random() * 48 * 60 * 60 * 1000)),
-      status: 'completed'
-    });
-  }
-  
-  // Sort by timestamp desc
-  db.agentActivities.sort((a, b) => b.timestamp - a.timestamp);
-}
-
-generateSampleData();
-
 // Routes
 app.get('/api/dashboard', (req, res) => {
   const today = format(new Date(), 'yyyy-MM-dd');
-  const todayAppointments = db.appointments.filter(a => a.date === today && a.status !== 'cancelled');
-  const pendingNotes = db.appointments.filter(a => a.status === 'completed' && !a.notes).length;
-  const overdueInvoices = db.invoices.filter(i => i.status === 'pending' && new Date(i.dueDate) < new Date()).length;
+  const todayAppointments = db.getAppointments({ date: today, status: 'confirmed' });
+  const pendingNotes = db.getNotes().filter(n => n.status === 'draft').length;
+  const activePatients = db.getPatients().filter(p => p.status === 'active').length;
+  const recentAgentActivity = db.getAgentActivities(10);
   
   res.json({
     todayAppointments: todayAppointments.length,
     pendingNotes,
-    overdueInvoices,
-    activePatients: db.patients.filter(p => p.status === 'active').length,
-    recentAgentActivity: db.agentActivities.slice(0, 10)
+    overdueInvoices: 0, // Not implemented yet
+    activePatients,
+    recentAgentActivity
   });
 });
 
@@ -177,28 +89,35 @@ app.get('/api/dashboard', (req, res) => {
 
 // Get all practitioners
 app.get('/api/practitioners', (req, res) => {
-  const enriched = db.practitioners.map(p => ({
-    ...p,
-    appointmentCount: db.appointments.filter(a => a.practitionerId === p.id && a.status !== 'cancelled').length,
-    nextAvailable: getNextAvailableSlot(p.id)
-  }));
+  const practitioners = db.getPractitioners();
+  const enriched = practitioners.map(p => {
+    const appointmentCount = db.getAppointments({ practitionerId: p.id, status: 'confirmed' }).length;
+    return {
+      ...p,
+      specializations: JSON.parse(p.specializations || '[]'),
+      workingHours: JSON.parse(p.workingHours || '{}'),
+      appointmentCount,
+      nextAvailable: getNextAvailableSlot(p.id)
+    };
+  });
   res.json(enriched);
 });
 
 // Get single practitioner
 app.get('/api/practitioners/:id', (req, res) => {
-  const practitioner = db.practitioners.find(p => p.id === req.params.id);
+  const practitioner = db.getPractitioner(req.params.id);
   if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
   
-  const practitionerAppointments = db.appointments.filter(a => a.practitionerId === practitioner.id);
+  const practitionerAppointments = db.getAppointments({ practitionerId: practitioner.id });
   const today = format(new Date(), 'yyyy-MM-dd');
   
   res.json({
     ...practitioner,
+    specializations: JSON.parse(practitioner.specializations || '[]'),
+    workingHours: JSON.parse(practitioner.workingHours || '{}'),
     appointments: practitionerAppointments,
     todayAppointments: practitionerAppointments.filter(a => a.date === today && a.status !== 'cancelled').length,
-    totalAppointments: practitionerAppointments.length,
-    services: db.services.filter(s => practitioner.serviceIds?.includes(s.id) || true)
+    totalAppointments: practitionerAppointments.length
   });
 });
 
@@ -210,74 +129,43 @@ app.post('/api/practitioners', (req, res) => {
     return res.status(400).json({ error: 'Name and role are required' });
   }
   
-  const practitioner = {
-    id: uuidv4(),
-    name,
-    role,
-    email: email || '',
-    phone: phone || '',
-    color: color || getRandomColor(),
-    bio: bio || '',
-    specializations: specializations || [],
-    workingHours: workingHours || {
-      monday: { start: '09:00', end: '17:00', enabled: true },
-      tuesday: { start: '09:00', end: '17:00', enabled: true },
-      wednesday: { start: '09:00', end: '17:00', enabled: true },
-      thursday: { start: '09:00', end: '17:00', enabled: true },
-      friday: { start: '09:00', end: '17:00', enabled: true },
-      saturday: { start: '09:00', end: '13:00', enabled: false },
-      sunday: { start: '09:00', end: '13:00', enabled: false }
-    },
-    isActive: true,
-    createdAt: new Date()
-  };
+  const practitioner = db.createPractitioner({
+    name, role, email, phone, color, bio, specializations, workingHours
+  });
   
-  db.practitioners.push(practitioner);
-  
-  db.agentActivities.unshift({
-    id: uuidv4(),
+  db.createAgentActivity({
     agentType: 'scheduling',
     action: `New practitioner added: ${name}`,
-    timestamp: new Date(),
     status: 'completed'
   });
   
-  res.status(201).json(practitioner);
+  res.status(201).json({
+    ...practitioner,
+    specializations: JSON.parse(practitioner.specializations || '[]'),
+    workingHours: JSON.parse(practitioner.workingHours || '{}')
+  });
 });
 
 // Update practitioner
 app.patch('/api/practitioners/:id', (req, res) => {
-  const practitioner = db.practitioners.find(p => p.id === req.params.id);
+  const practitioner = db.updatePractitioner(req.params.id, req.body);
   if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
   
-  const { name, role, email, phone, color, bio, specializations, workingHours, isActive } = req.body;
-  
-  if (name !== undefined) practitioner.name = name;
-  if (role !== undefined) practitioner.role = role;
-  if (email !== undefined) practitioner.email = email;
-  if (phone !== undefined) practitioner.phone = phone;
-  if (color !== undefined) practitioner.color = color;
-  if (bio !== undefined) practitioner.bio = bio;
-  if (specializations !== undefined) practitioner.specializations = specializations;
-  if (workingHours !== undefined) practitioner.workingHours = workingHours;
-  if (isActive !== undefined) practitioner.isActive = isActive;
-  
-  practitioner.updatedAt = new Date();
-  
-  res.json(practitioner);
+  res.json({
+    ...practitioner,
+    specializations: JSON.parse(practitioner.specializations || '[]'),
+    workingHours: JSON.parse(practitioner.workingHours || '{}')
+  });
 });
 
 // Delete practitioner
 app.delete('/api/practitioners/:id', (req, res) => {
-  const index = db.practitioners.findIndex(p => p.id === req.params.id);
-  if (index === -1) return res.status(404).json({ error: 'Practitioner not found' });
-  
   // Check for future appointments
-  const futureAppointments = db.appointments.filter(
-    a => a.practitionerId === req.params.id && 
-    a.date >= format(new Date(), 'yyyy-MM-dd') &&
-    a.status !== 'cancelled'
-  );
+  const futureAppointments = db.getAppointments({
+    practitionerId: req.params.id,
+    startDate: format(new Date(), 'yyyy-MM-dd'),
+    status: 'confirmed'
+  });
   
   if (futureAppointments.length > 0) {
     return res.status(400).json({ 
@@ -286,31 +174,34 @@ app.delete('/api/practitioners/:id', (req, res) => {
     });
   }
   
-  db.practitioners.splice(index, 1);
+  db.deletePractitioner(req.params.id);
   res.status(204).send();
 });
 
 // Get practitioner's calendar
 app.get('/api/practitioners/:id/calendar', (req, res) => {
   const { startDate, endDate } = req.query;
-  const practitioner = db.practitioners.find(p => p.id === req.params.id);
+  const practitioner = db.getPractitioner(req.params.id);
   if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
   
-  let appointments = db.appointments.filter(a => a.practitionerId === req.params.id);
-  
-  if (startDate) appointments = appointments.filter(a => a.date >= startDate);
-  if (endDate) appointments = appointments.filter(a => a.date <= endDate);
+  const appointments = db.getAppointments({
+    practitionerId: req.params.id,
+    startDate,
+    endDate
+  });
   
   const enriched = appointments.map(a => ({
     ...a,
-    patient: db.patients.find(p => p.id === a.patientId),
-    service: db.services.find(s => s.id === a.serviceId)
+    patient: db.getPatient(a.patientId),
+    service: db.getService(a.serviceId)
   }));
   
   res.json({
-    practitioner,
-    appointments: enriched,
-    workingHours: practitioner.workingHours
+    practitioner: {
+      ...practitioner,
+      workingHours: JSON.parse(practitioner.workingHours || '{}')
+    },
+    appointments: enriched
   });
 });
 
@@ -318,16 +209,17 @@ app.get('/api/practitioners/:id/calendar', (req, res) => {
 
 // Get all services
 app.get('/api/services', (req, res) => {
-  const enriched = db.services.map(s => ({
+  const services = db.getServices();
+  const enriched = services.map(s => ({
     ...s,
-    appointmentCount: db.appointments.filter(a => a.serviceId === s.id).length
+    appointmentCount: db.getAppointments({ serviceId: s.id }).length
   }));
   res.json(enriched);
 });
 
 // Get single service
 app.get('/api/services/:id', (req, res) => {
-  const service = db.services.find(s => s.id === req.params.id);
+  const service = db.getService(req.params.id);
   if (!service) return res.status(404).json({ error: 'Service not found' });
   res.json(service);
 });
@@ -340,25 +232,11 @@ app.post('/api/services', (req, res) => {
     return res.status(400).json({ error: 'Name, duration, and price are required' });
   }
   
-  const service = {
-    id: uuidv4(),
-    name,
-    duration: parseInt(duration),
-    price: parseFloat(price),
-    color: color || getRandomColor(),
-    description: description || '',
-    category: category || 'general',
-    isActive: true,
-    createdAt: new Date()
-  };
+  const service = db.createService({ name, duration: parseInt(duration), price: parseFloat(price), color, description, category });
   
-  db.services.push(service);
-  
-  db.agentActivities.unshift({
-    id: uuidv4(),
+  db.createAgentActivity({
     agentType: 'scheduling',
     action: `New service added: ${name}`,
-    timestamp: new Date(),
     status: 'completed'
   });
   
@@ -367,35 +245,19 @@ app.post('/api/services', (req, res) => {
 
 // Update service
 app.patch('/api/services/:id', (req, res) => {
-  const service = db.services.find(s => s.id === req.params.id);
+  const service = db.updateService(req.params.id, req.body);
   if (!service) return res.status(404).json({ error: 'Service not found' });
-  
-  const { name, duration, price, color, description, category, isActive } = req.body;
-  
-  if (name !== undefined) service.name = name;
-  if (duration !== undefined) service.duration = parseInt(duration);
-  if (price !== undefined) service.price = parseFloat(price);
-  if (color !== undefined) service.color = color;
-  if (description !== undefined) service.description = description;
-  if (category !== undefined) service.category = category;
-  if (isActive !== undefined) service.isActive = isActive;
-  
-  service.updatedAt = new Date();
-  
   res.json(service);
 });
 
 // Delete service
 app.delete('/api/services/:id', (req, res) => {
-  const index = db.services.findIndex(s => s.id === req.params.id);
-  if (index === -1) return res.status(404).json({ error: 'Service not found' });
-  
   // Check for future appointments using this service
-  const futureAppointments = db.appointments.filter(
-    a => a.serviceId === req.params.id && 
-    a.date >= format(new Date(), 'yyyy-MM-dd') &&
-    a.status !== 'cancelled'
-  );
+  const futureAppointments = db.getAppointments({
+    serviceId: req.params.id,
+    startDate: format(new Date(), 'yyyy-MM-dd'),
+    status: 'confirmed'
+  });
   
   if (futureAppointments.length > 0) {
     return res.status(400).json({ 
@@ -404,17 +266,17 @@ app.delete('/api/services/:id', (req, res) => {
     });
   }
   
-  db.services.splice(index, 1);
+  db.deleteService(req.params.id);
   res.status(204).send();
 });
 
-app.get('/api/patients', (req, res) => res.json(db.patients));
+app.get('/api/patients', (req, res) => res.json(db.getPatients()));
 
 app.get('/api/patients/:id', (req, res) => {
-  const patient = db.patients.find(p => p.id === req.params.id);
+  const patient = db.getPatient(req.params.id);
   if (!patient) return res.status(404).json({ error: 'Patient not found' });
-  const patientAppointments = db.appointments.filter(a => a.patientId === patient.id);
-  const patientNotes = db.notes.filter(n => n.patientId === patient.id);
+  const patientAppointments = db.getAppointments({ patientId: patient.id });
+  const patientNotes = db.getNotes({ patientId: patient.id });
   res.json({ ...patient, appointments: patientAppointments, notes: patientNotes });
 });
 
@@ -423,26 +285,13 @@ app.get('/api/patients/:id', (req, res) => {
 // Get appointments with filtering
 app.get('/api/appointments', (req, res) => {
   const { date, practitionerId, patientId, status, startDate, endDate } = req.query;
-  let appointments = db.appointments;
-  
-  if (date) appointments = appointments.filter(a => a.date === date);
-  if (startDate) appointments = appointments.filter(a => a.date >= startDate);
-  if (endDate) appointments = appointments.filter(a => a.date <= endDate);
-  if (practitionerId) appointments = appointments.filter(a => a.practitionerId === practitionerId);
-  if (patientId) appointments = appointments.filter(a => a.patientId === patientId);
-  if (status) appointments = appointments.filter(a => a.status === status);
-  
-  // Sort by date and time
-  appointments.sort((a, b) => {
-    if (a.date !== b.date) return a.date.localeCompare(b.date);
-    return a.time.localeCompare(b.time);
-  });
+  const appointments = db.getAppointments({ date, practitionerId, patientId, status, startDate, endDate });
   
   const enriched = appointments.map(a => ({
     ...a,
-    patient: db.patients.find(p => p.id === a.patientId),
-    practitioner: db.practitioners.find(p => p.id === a.practitionerId),
-    service: db.services.find(s => s.id === a.serviceId)
+    patient: db.getPatient(a.patientId),
+    practitioner: db.getPractitioner(a.practitionerId),
+    service: db.getService(a.serviceId)
   }));
   
   res.json(enriched);
@@ -450,14 +299,14 @@ app.get('/api/appointments', (req, res) => {
 
 // Get single appointment
 app.get('/api/appointments/:id', (req, res) => {
-  const appointment = db.appointments.find(a => a.id === req.params.id);
+  const appointment = db.getAppointment(req.params.id);
   if (!appointment) return res.status(404).json({ error: 'Appointment not found' });
   
   res.json({
     ...appointment,
-    patient: db.patients.find(p => p.id === appointment.patientId),
-    practitioner: db.practitioners.find(p => p.id === appointment.practitionerId),
-    service: db.services.find(s => s.id === appointment.serviceId)
+    patient: db.getPatient(appointment.patientId),
+    practitioner: db.getPractitioner(appointment.practitionerId),
+    service: db.getService(appointment.serviceId)
   });
 });
 
@@ -471,33 +320,29 @@ app.post('/api/appointments', (req, res) => {
   }
   
   // Check practitioner exists
-  const practitioner = db.practitioners.find(p => p.id === practitionerId);
+  const practitioner = db.getPractitioner(practitionerId);
   if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
-  if (!practitioner.isActive) return res.status(400).json({ error: 'Practitioner is not active' });
+  if (practitioner.isActive === 0) return res.status(400).json({ error: 'Practitioner is not active' });
   
   // Check service exists
-  const service = db.services.find(s => s.id === serviceId);
+  const service = db.getService(serviceId);
   if (!service) return res.status(404).json({ error: 'Service not found' });
-  if (!service.isActive) return res.status(400).json({ error: 'Service is not active' });
+  if (service.isActive === 0) return res.status(400).json({ error: 'Service is not active' });
   
   // Check for conflicts
-  const existingAppointment = db.appointments.find(a => 
-    a.practitionerId === practitionerId && 
-    a.date === date && 
-    a.time === time && 
-    a.status !== 'cancelled'
-  );
+  const existingAppointments = db.getAppointments({ practitionerId, date, status: 'confirmed' });
+  const hasConflict = existingAppointments.some(a => a.time === time);
   
-  if (existingAppointment) {
+  if (hasConflict) {
     return res.status(409).json({ 
-      error: 'Time slot is not available',
-      conflict: existingAppointment
+      error: 'Time slot is not available'
     });
   }
   
   // Check practitioner's working hours
   const dayOfWeek = new Date(date).toLocaleDateString('en-US', { weekday: 'lowercase' });
-  const workingDay = practitioner.workingHours?.[dayOfWeek];
+  const workingHours = JSON.parse(practitioner.workingHours || '{}');
+  const workingDay = workingHours[dayOfWeek];
   
   if (workingDay && !workingDay.enabled) {
     return res.status(400).json({ error: 'Practitioner does not work on this day' });
@@ -510,108 +355,77 @@ app.post('/api/appointments', (req, res) => {
     });
   }
   
-  const appointment = { 
-    id: uuidv4(), 
-    patientId, 
-    practitionerId, 
-    serviceId, 
-    date, 
-    time, 
-    duration: service.duration,
-    notes: notes || '',
-    status: 'confirmed',
-    createdAt: new Date() 
-  };
+  const appointment = db.createAppointment({
+    patientId, practitionerId, serviceId, date, time, duration: service.duration, notes
+  });
   
-  db.appointments.push(appointment);
+  const patient = db.getPatient(patientId);
   
-  const patient = db.patients.find(p => p.id === patientId);
-  
-  db.agentActivities.unshift({
-    id: uuidv4(),
+  db.createAgentActivity({
     agentType: 'scheduling',
     action: `New appointment booked: ${service.name} for ${patient?.firstName} ${patient?.lastName} with ${practitioner.name}`,
     patientId,
-    timestamp: new Date(),
     status: 'completed'
   });
   
   res.status(201).json({
     ...appointment,
     patient,
-    practitioner,
+    practitioner: { ...practitioner, workingHours: JSON.parse(practitioner.workingHours || '{}') },
     service
   });
 });
 
 // Update appointment
 app.patch('/api/appointments/:id', (req, res) => {
-  const appointment = db.appointments.find(a => a.id === req.params.id);
-  if (!appointment) return res.status(404).json({ error: 'Appointment not found' });
+  const existing = db.getAppointment(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Appointment not found' });
   
-  const { date, time, status, notes, practitionerId, serviceId } = req.body;
+  const { date, time, practitionerId } = req.body;
   
   // Check for conflicts if changing time/practitioner
-  if ((date !== undefined && date !== appointment.date) || 
-      (time !== undefined && time !== appointment.time) ||
-      (practitionerId !== undefined && practitionerId !== appointment.practitionerId)) {
+  if (date || time || practitionerId) {
+    const newPractitionerId = practitionerId || existing.practitionerId;
+    const newDate = date || existing.date;
+    const newTime = time || existing.time;
     
-    const newPractitionerId = practitionerId || appointment.practitionerId;
-    const newDate = date || appointment.date;
-    const newTime = time || appointment.time;
+    const conflicts = db.getAppointments({
+      practitionerId: newPractitionerId,
+      date: newDate,
+      status: 'confirmed'
+    }).filter(a => a.id !== req.params.id && a.time === newTime);
     
-    const existingAppointment = db.appointments.find(a => 
-      a.id !== appointment.id &&
-      a.practitionerId === newPractitionerId && 
-      a.date === newDate && 
-      a.time === newTime && 
-      a.status !== 'cancelled'
-    );
-    
-    if (existingAppointment) {
+    if (conflicts.length > 0) {
       return res.status(409).json({ 
-        error: 'Time slot is not available',
-        conflict: existingAppointment
+        error: 'Time slot is not available'
       });
     }
   }
   
-  if (date !== undefined) appointment.date = date;
-  if (time !== undefined) appointment.time = time;
-  if (status !== undefined) appointment.status = status;
-  if (notes !== undefined) appointment.notes = notes;
-  if (practitionerId !== undefined) appointment.practitionerId = practitionerId;
-  if (serviceId !== undefined) {
-    appointment.serviceId = serviceId;
-    const service = db.services.find(s => s.id === serviceId);
-    if (service) appointment.duration = service.duration;
-  }
-  
-  appointment.updatedAt = new Date();
+  const appointment = db.updateAppointment(req.params.id, req.body);
   
   res.json({
     ...appointment,
-    patient: db.patients.find(p => p.id === appointment.patientId),
-    practitioner: db.practitioners.find(p => p.id === appointment.practitionerId),
-    service: db.services.find(s => s.id === appointment.serviceId)
+    patient: db.getPatient(appointment.patientId),
+    practitioner: db.getPractitioner(appointment.practitionerId),
+    service: db.getService(appointment.serviceId)
   });
 });
 
 // Cancel appointment
 app.post('/api/appointments/:id/cancel', (req, res) => {
-  const appointment = db.appointments.find(a => a.id === req.params.id);
+  const appointment = db.updateAppointment(req.params.id, {
+    status: 'cancelled',
+    cancelledAt: new Date().toISOString(),
+    cancellationReason: req.body.reason || ''
+  });
+  
   if (!appointment) return res.status(404).json({ error: 'Appointment not found' });
   
-  appointment.status = 'cancelled';
-  appointment.cancelledAt = new Date();
-  appointment.cancellationReason = req.body.reason || '';
-  
-  db.agentActivities.unshift({
-    id: uuidv4(),
+  db.createAgentActivity({
     agentType: 'scheduling',
     action: `Appointment cancelled: ${appointment.date} at ${appointment.time}`,
     patientId: appointment.patientId,
-    timestamp: new Date(),
     status: 'completed'
   });
   
@@ -620,29 +434,24 @@ app.post('/api/appointments/:id/cancel', (req, res) => {
 
 // Delete appointment (hard delete)
 app.delete('/api/appointments/:id', (req, res) => {
-  const index = db.appointments.findIndex(a => a.id === req.params.id);
-  if (index === -1) return res.status(404).json({ error: 'Appointment not found' });
-  
-  db.appointments.splice(index, 1);
+  db.deleteAppointment(req.params.id);
   res.status(204).send();
 });
 
 app.post('/api/voice-webhook', (req, res) => {
   const { type } = req.body;
-  db.agentActivities.unshift({
-    id: uuidv4(),
+  db.createAgentActivity({
     agentType: 'scheduling',
     action: `Voice AI: ${type}`,
-    timestamp: new Date(),
     status: 'completed'
   });
   res.json({ success: true, action: type === 'booking' ? 'appointment_booked' : 'information_provided' });
 });
 
 app.get('/api/agent-activities', (req, res) => {
-  const activities = db.agentActivities.slice(0, 50).map(a => ({
+  const activities = db.getAgentActivities(50).map(a => ({
     ...a,
-    patient: db.patients.find(p => p.id === a.patientId)
+    patient: a.patientId ? db.getPatient(a.patientId) : null
   }));
   res.json(activities);
 });
@@ -655,7 +464,7 @@ app.post('/api/transcribe', async (req, res) => {
 
   try {
     const { audioBase64, appointmentId } = req.body;
-    
+
     if (!audioBase64) {
       return res.status(400).json({ error: 'No audio data provided' });
     }
@@ -663,7 +472,7 @@ app.post('/api/transcribe', async (req, res) => {
     // Convert base64 to buffer
     const audioBuffer = Buffer.from(audioBase64, 'base64');
     const tempFile = `/tmp/audio-${Date.now()}.webm`;
-    
+
     // Write to temp file
     fs.writeFileSync(tempFile, audioBuffer);
 
@@ -710,12 +519,11 @@ app.post('/api/transcribe', async (req, res) => {
     fs.unlinkSync(tempFile);
 
     // Log the transcription activity
-    db.agentActivities.unshift({
-      id: uuidv4(),
+    const appointment = appointmentId ? db.getAppointment(appointmentId) : null;
+    db.createAgentActivity({
       agentType: 'documentation',
       action: 'Transcribed session audio with Whisper',
-      patientId: appointmentId ? db.appointments.find(a => a.id === appointmentId)?.patientId : null,
-      timestamp: new Date(),
+      patientId: appointment?.patientId,
       status: 'completed'
     });
 
@@ -736,24 +544,20 @@ app.post('/api/generate-note', async (req, res) => {
   if (!OPENAI_API_KEY) {
     // Fallback to mock data if no API key
     const { appointmentId } = req.body;
-    const note = {
-      id: uuidv4(),
+    const note = db.createNote({
       appointmentId,
       type: 'SOAP',
       subjective: 'Patient reports continued improvement in knee mobility. Pain level reduced from 6/10 to 3/10.',
       objective: 'ROM: Knee flexion 0-125° (improved from 110°). Gait normal. No swelling observed.',
       assessment: 'Good progress with rehabilitation. Patient responding well to treatment protocol.',
       plan: 'Continue with current exercise program. Schedule follow-up in 2 weeks.',
-      generatedAt: new Date(),
       status: 'draft',
       source: 'mock'
-    };
-    db.notes.push(note);
-    db.agentActivities.unshift({
-      id: uuidv4(),
+    });
+
+    db.createAgentActivity({
       agentType: 'documentation',
       action: 'Generated SOAP note from session',
-      timestamp: new Date(),
       status: 'completed'
     });
     return res.json(note);
@@ -761,16 +565,16 @@ app.post('/api/generate-note', async (req, res) => {
 
   try {
     const { appointmentId, transcript, patientContext } = req.body;
-    
+
     if (!transcript) {
       return res.status(400).json({ error: 'No transcript provided' });
     }
 
     // Get appointment details for context
-    const appointment = db.appointments.find(a => a.id === appointmentId);
-    const patient = appointment ? db.patients.find(p => p.id === appointment.patientId) : null;
-    const practitioner = appointment ? db.practitioners.find(p => p.id === appointment.practitionerId) : null;
-    const service = appointment ? db.services.find(s => s.id === appointment.serviceId) : null;
+    const appointment = appointmentId ? db.getAppointment(appointmentId) : null;
+    const patient = appointment ? db.getPatient(appointment.patientId) : null;
+    const practitioner = appointment ? db.getPractitioner(appointment.practitionerId) : null;
+    const service = appointment ? db.getService(appointment.serviceId) : null;
 
     // Build the prompt for GPT-4o
     const systemPrompt = `You are an expert physiotherapy documentation assistant. Generate a professional SOAP note from the session transcript.
@@ -812,8 +616,7 @@ Provide the note in JSON format with fields: subjective, objective, assessment, 
 
     const noteContent = JSON.parse(response.choices[0].message.content);
 
-    const note = {
-      id: uuidv4(),
+    const note = db.createNote({
       appointmentId,
       patientId: patient?.id,
       type: 'SOAP',
@@ -822,19 +625,15 @@ Provide the note in JSON format with fields: subjective, objective, assessment, 
       assessment: noteContent.assessment || '',
       plan: noteContent.plan || '',
       transcript,
-      generatedAt: new Date(),
       status: 'draft',
       source: 'ai',
       model: 'gpt-4o'
-    };
+    });
 
-    db.notes.push(note);
-    db.agentActivities.unshift({
-      id: uuidv4(),
+    db.createAgentActivity({
       agentType: 'documentation',
       action: `Generated SOAP note with GPT-4o for ${patient ? patient.firstName + ' ' + patient.lastName : 'patient'}`,
       patientId: patient?.id,
-      timestamp: new Date(),
       status: 'completed'
     });
 
@@ -849,57 +648,41 @@ Provide the note in JSON format with fields: subjective, objective, assessment, 
 // Get all notes for a patient
 app.get('/api/notes', (req, res) => {
   const { patientId, appointmentId } = req.query;
-  let notes = db.notes;
-  
-  if (patientId) notes = notes.filter(n => n.patientId === patientId);
-  if (appointmentId) notes = notes.filter(n => n.appointmentId === appointmentId);
-  
+  const notes = db.getNotes({ patientId, appointmentId });
+
   // Enrich with patient info
   const enriched = notes.map(n => ({
     ...n,
-    patient: n.patientId ? db.patients.find(p => p.id === n.patientId) : null,
-    appointment: n.appointmentId ? db.appointments.find(a => a.id === n.appointmentId) : null
+    patient: n.patientId ? db.getPatient(n.patientId) : null,
+    appointment: n.appointmentId ? db.getAppointment(n.appointmentId) : null
   }));
-  
+
   res.json(enriched);
 });
 
 // Get single note
 app.get('/api/notes/:id', (req, res) => {
-  const note = db.notes.find(n => n.id === req.params.id);
+  const note = db.getNote(req.params.id);
   if (!note) return res.status(404).json({ error: 'Note not found' });
-  
+
   res.json({
     ...note,
-    patient: note.patientId ? db.patients.find(p => p.id === note.patientId) : null,
-    appointment: note.appointmentId ? db.appointments.find(a => a.id === note.appointmentId) : null
+    patient: note.patientId ? db.getPatient(note.patientId) : null,
+    appointment: note.appointmentId ? db.getAppointment(note.appointmentId) : null
   });
 });
 
 // Update note (for editing/saving)
 app.patch('/api/notes/:id', (req, res) => {
-  const note = db.notes.find(n => n.id === req.params.id);
+  const note = db.updateNote(req.params.id, req.body);
   if (!note) return res.status(404).json({ error: 'Note not found' });
-  
-  const { subjective, objective, assessment, plan, status } = req.body;
-  
-  if (subjective !== undefined) note.subjective = subjective;
-  if (objective !== undefined) note.objective = objective;
-  if (assessment !== undefined) note.assessment = assessment;
-  if (plan !== undefined) note.plan = plan;
-  if (status !== undefined) note.status = status;
-  
-  note.updatedAt = new Date();
-  
+
   res.json(note);
 });
 
 // Delete note
 app.delete('/api/notes/:id', (req, res) => {
-  const index = db.notes.findIndex(n => n.id === req.params.id);
-  if (index === -1) return res.status(404).json({ error: 'Note not found' });
-  
-  db.notes.splice(index, 1);
+  db.deleteNote(req.params.id);
   res.status(204).send();
 });
 
@@ -907,20 +690,20 @@ app.delete('/api/notes/:id', (req, res) => {
 
 app.get('/api/availability', (req, res) => {
   const { date, practitionerId, serviceId, duration } = req.query;
-  
+
   if (!date) return res.status(400).json({ error: 'Date is required' });
-  
+
   const requestedDuration = parseInt(duration) || 30;
-  const service = serviceId ? db.services.find(s => s.id === serviceId) : null;
+  const service = serviceId ? db.getService(serviceId) : null;
   const actualDuration = service ? service.duration : requestedDuration;
-  
+
   // If specific practitioner requested
   if (practitionerId) {
-    const practitioner = db.practitioners.find(p => p.id === practitionerId);
+    const practitioner = db.getPractitioner(practitionerId);
     if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
-    
+
     const slots = getAvailableSlots(date, practitioner, actualDuration);
-    
+
     return res.json({
       date,
       practitionerId,
@@ -929,16 +712,19 @@ app.get('/api/availability', (req, res) => {
       slots
     });
   }
-  
+
   // Return availability for all practitioners
-  const allAvailability = db.practitioners
-    .filter(p => p.isActive !== false)
+  const allPractitioners = db.getPractitioners().filter(p => p.isActive !== 0);
+  const allAvailability = allPractitioners
     .map(practitioner => ({
-      practitioner,
+      practitioner: {
+        ...practitioner,
+        workingHours: JSON.parse(practitioner.workingHours || '{}')
+      },
       slots: getAvailableSlots(date, practitioner, actualDuration)
     }))
     .filter(a => a.slots.length > 0);
-  
+
   res.json({
     date,
     serviceId,
@@ -951,34 +737,35 @@ app.get('/api/availability', (req, res) => {
 function getAvailableSlots(date, practitioner, duration = 30) {
   const slots = [];
   const dayOfWeek = new Date(date).toLocaleDateString('en-US', { weekday: 'lowercase' });
-  const workingDay = practitioner.workingHours?.[dayOfWeek];
-  
+  const workingHours = JSON.parse(practitioner.workingHours || '{}');
+  const workingDay = workingHours[dayOfWeek];
+
   if (!workingDay || !workingDay.enabled) return slots;
-  
+
   const startHour = parseInt(workingDay.start.split(':')[0]);
   const startMinute = parseInt(workingDay.start.split(':')[1]);
   const endHour = parseInt(workingDay.end.split(':')[0]);
   const endMinute = parseInt(workingDay.end.split(':')[1]);
-  
+
+  // Get existing appointments for this date and practitioner
+  const existingAppointments = db.getAppointments({
+    practitionerId: practitioner.id,
+    date: date,
+    status: 'confirmed'
+  });
+
   // Generate slots every 15 minutes
   for (let hour = startHour; hour < endHour || (hour === endHour && 0 < endMinute); hour++) {
     for (let minute = (hour === startHour ? startMinute : 0); minute < 60; minute += 15) {
       if (hour === endHour && minute >= endMinute) break;
-      
+
       const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-      
-      // Check if slot is available
-      const slotEndHour = hour + Math.floor((minute + duration) / 60);
-      const slotEndMinute = (minute + duration) % 60;
-      
+
       // Check for conflicts with existing appointments
-      const hasConflict = db.appointments.some(a => 
-        a.practitionerId === practitioner.id && 
-        a.date === date && 
-        a.status !== 'cancelled' &&
+      const hasConflict = existingAppointments.some(a =>
         isTimeOverlapping(time, duration, a.time, a.duration || 30)
       );
-      
+
       if (!hasConflict) {
         slots.push({
           time,
@@ -989,7 +776,7 @@ function getAvailableSlots(date, practitioner, duration = 30) {
       }
     }
   }
-  
+
   return slots;
 }
 
@@ -1010,9 +797,9 @@ function isTimeOverlapping(start1, duration1, start2, duration2) {
 
 // Helper function to get next available slot
 function getNextAvailableSlot(practitionerId) {
-  const practitioner = db.practitioners.find(p => p.id === practitionerId);
+  const practitioner = db.getPractitioner(practitionerId);
   if (!practitioner) return null;
-  
+
   const today = new Date();
   for (let i = 0; i < 14; i++) {
     const date = format(addDays(today, i), 'yyyy-MM-dd');
