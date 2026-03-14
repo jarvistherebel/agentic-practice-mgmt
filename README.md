@@ -42,10 +42,25 @@ npm start
 ```env
 PORT=3000
 NODE_ENV=production
-# Add your VAPI/Retell API keys for voice AI
+# Required for AI note generation
+OPENAI_API_KEY=sk-your_openai_key_here
+# Optional: For voice AI integration
 VAPI_API_KEY=your_key_here
-OPENAI_API_KEY=your_key_here
 ```
+
+### 📝 AI Note Generation Setup
+
+The system uses **OpenAI Whisper** for audio transcription and **GPT-4o** for SOAP note generation:
+
+1. Get an OpenAI API key from https://platform.openai.com
+2. Add it to your environment variables as `OPENAI_API_KEY`
+3. Cost: ~$0.10-0.20 per 15-minute session
+
+**How it works:**
+1. Record session audio in the Notes tab
+2. Audio is sent to Whisper API for transcription
+3. Transcript is sent to GPT-4o to generate structured SOAP note
+4. Review and edit the note before saving
 
 ## 🏗️ Architecture
 
