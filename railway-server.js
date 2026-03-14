@@ -173,8 +173,241 @@ app.get('/api/dashboard', (req, res) => {
   });
 });
 
-app.get('/api/practitioners', (req, res) => res.json(db.practitioners));
-app.get('/api/services', (req, res) => res.json(db.services));
+// ==================== PRACTITIONER MANAGEMENT ====================
+
+// Get all practitioners
+app.get('/api/practitioners', (req, res) => {
+  const enriched = db.practitioners.map(p => ({
+    ...p,
+    appointmentCount: db.appointments.filter(a => a.practitionerId === p.id && a.status !== 'cancelled').length,
+    nextAvailable: getNextAvailableSlot(p.id)
+  }));
+  res.json(enriched);
+});
+
+// Get single practitioner
+app.get('/api/practitioners/:id', (req, res) => {
+  const practitioner = db.practitioners.find(p => p.id === req.params.id);
+  if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
+  
+  const practitionerAppointments = db.appointments.filter(a => a.practitionerId === practitioner.id);
+  const today = format(new Date(), 'yyyy-MM-dd');
+  
+  res.json({
+    ...practitioner,
+    appointments: practitionerAppointments,
+    todayAppointments: practitionerAppointments.filter(a => a.date === today && a.status !== 'cancelled').length,
+    totalAppointments: practitionerAppointments.length,
+    services: db.services.filter(s => practitioner.serviceIds?.includes(s.id) || true)
+  });
+});
+
+// Create new practitioner (admin only)
+app.post('/api/practitioners', (req, res) => {
+  const { name, role, email, phone, color, bio, specializations, workingHours } = req.body;
+  
+  if (!name || !role) {
+    return res.status(400).json({ error: 'Name and role are required' });
+  }
+  
+  const practitioner = {
+    id: uuidv4(),
+    name,
+    role,
+    email: email || '',
+    phone: phone || '',
+    color: color || getRandomColor(),
+    bio: bio || '',
+    specializations: specializations || [],
+    workingHours: workingHours || {
+      monday: { start: '09:00', end: '17:00', enabled: true },
+      tuesday: { start: '09:00', end: '17:00', enabled: true },
+      wednesday: { start: '09:00', end: '17:00', enabled: true },
+      thursday: { start: '09:00', end: '17:00', enabled: true },
+      friday: { start: '09:00', end: '17:00', enabled: true },
+      saturday: { start: '09:00', end: '13:00', enabled: false },
+      sunday: { start: '09:00', end: '13:00', enabled: false }
+    },
+    isActive: true,
+    createdAt: new Date()
+  };
+  
+  db.practitioners.push(practitioner);
+  
+  db.agentActivities.unshift({
+    id: uuidv4(),
+    agentType: 'scheduling',
+    action: `New practitioner added: ${name}`,
+    timestamp: new Date(),
+    status: 'completed'
+  });
+  
+  res.status(201).json(practitioner);
+});
+
+// Update practitioner
+app.patch('/api/practitioners/:id', (req, res) => {
+  const practitioner = db.practitioners.find(p => p.id === req.params.id);
+  if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
+  
+  const { name, role, email, phone, color, bio, specializations, workingHours, isActive } = req.body;
+  
+  if (name !== undefined) practitioner.name = name;
+  if (role !== undefined) practitioner.role = role;
+  if (email !== undefined) practitioner.email = email;
+  if (phone !== undefined) practitioner.phone = phone;
+  if (color !== undefined) practitioner.color = color;
+  if (bio !== undefined) practitioner.bio = bio;
+  if (specializations !== undefined) practitioner.specializations = specializations;
+  if (workingHours !== undefined) practitioner.workingHours = workingHours;
+  if (isActive !== undefined) practitioner.isActive = isActive;
+  
+  practitioner.updatedAt = new Date();
+  
+  res.json(practitioner);
+});
+
+// Delete practitioner
+app.delete('/api/practitioners/:id', (req, res) => {
+  const index = db.practitioners.findIndex(p => p.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: 'Practitioner not found' });
+  
+  // Check for future appointments
+  const futureAppointments = db.appointments.filter(
+    a => a.practitionerId === req.params.id && 
+    a.date >= format(new Date(), 'yyyy-MM-dd') &&
+    a.status !== 'cancelled'
+  );
+  
+  if (futureAppointments.length > 0) {
+    return res.status(400).json({ 
+      error: 'Cannot delete practitioner with future appointments',
+      appointments: futureAppointments.length
+    });
+  }
+  
+  db.practitioners.splice(index, 1);
+  res.status(204).send();
+});
+
+// Get practitioner's calendar
+app.get('/api/practitioners/:id/calendar', (req, res) => {
+  const { startDate, endDate } = req.query;
+  const practitioner = db.practitioners.find(p => p.id === req.params.id);
+  if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
+  
+  let appointments = db.appointments.filter(a => a.practitionerId === req.params.id);
+  
+  if (startDate) appointments = appointments.filter(a => a.date >= startDate);
+  if (endDate) appointments = appointments.filter(a => a.date <= endDate);
+  
+  const enriched = appointments.map(a => ({
+    ...a,
+    patient: db.patients.find(p => p.id === a.patientId),
+    service: db.services.find(s => s.id === a.serviceId)
+  }));
+  
+  res.json({
+    practitioner,
+    appointments: enriched,
+    workingHours: practitioner.workingHours
+  });
+});
+
+// ==================== SERVICE/APPOINTMENT TYPE MANAGEMENT ====================
+
+// Get all services
+app.get('/api/services', (req, res) => {
+  const enriched = db.services.map(s => ({
+    ...s,
+    appointmentCount: db.appointments.filter(a => a.serviceId === s.id).length
+  }));
+  res.json(enriched);
+});
+
+// Get single service
+app.get('/api/services/:id', (req, res) => {
+  const service = db.services.find(s => s.id === req.params.id);
+  if (!service) return res.status(404).json({ error: 'Service not found' });
+  res.json(service);
+});
+
+// Create new service (admin only)
+app.post('/api/services', (req, res) => {
+  const { name, duration, price, color, description, category } = req.body;
+  
+  if (!name || !duration || !price) {
+    return res.status(400).json({ error: 'Name, duration, and price are required' });
+  }
+  
+  const service = {
+    id: uuidv4(),
+    name,
+    duration: parseInt(duration),
+    price: parseFloat(price),
+    color: color || getRandomColor(),
+    description: description || '',
+    category: category || 'general',
+    isActive: true,
+    createdAt: new Date()
+  };
+  
+  db.services.push(service);
+  
+  db.agentActivities.unshift({
+    id: uuidv4(),
+    agentType: 'scheduling',
+    action: `New service added: ${name}`,
+    timestamp: new Date(),
+    status: 'completed'
+  });
+  
+  res.status(201).json(service);
+});
+
+// Update service
+app.patch('/api/services/:id', (req, res) => {
+  const service = db.services.find(s => s.id === req.params.id);
+  if (!service) return res.status(404).json({ error: 'Service not found' });
+  
+  const { name, duration, price, color, description, category, isActive } = req.body;
+  
+  if (name !== undefined) service.name = name;
+  if (duration !== undefined) service.duration = parseInt(duration);
+  if (price !== undefined) service.price = parseFloat(price);
+  if (color !== undefined) service.color = color;
+  if (description !== undefined) service.description = description;
+  if (category !== undefined) service.category = category;
+  if (isActive !== undefined) service.isActive = isActive;
+  
+  service.updatedAt = new Date();
+  
+  res.json(service);
+});
+
+// Delete service
+app.delete('/api/services/:id', (req, res) => {
+  const index = db.services.findIndex(s => s.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: 'Service not found' });
+  
+  // Check for future appointments using this service
+  const futureAppointments = db.appointments.filter(
+    a => a.serviceId === req.params.id && 
+    a.date >= format(new Date(), 'yyyy-MM-dd') &&
+    a.status !== 'cancelled'
+  );
+  
+  if (futureAppointments.length > 0) {
+    return res.status(400).json({ 
+      error: 'Cannot delete service with future appointments',
+      appointments: futureAppointments.length
+    });
+  }
+  
+  db.services.splice(index, 1);
+  res.status(204).send();
+});
+
 app.get('/api/patients', (req, res) => res.json(db.patients));
 
 app.get('/api/patients/:id', (req, res) => {
@@ -185,13 +418,25 @@ app.get('/api/patients/:id', (req, res) => {
   res.json({ ...patient, appointments: patientAppointments, notes: patientNotes });
 });
 
+// ==================== APPOINTMENT/BOOKING SYSTEM ====================
+
+// Get appointments with filtering
 app.get('/api/appointments', (req, res) => {
-  const { date, practitionerId, patientId } = req.query;
+  const { date, practitionerId, patientId, status, startDate, endDate } = req.query;
   let appointments = db.appointments;
   
   if (date) appointments = appointments.filter(a => a.date === date);
+  if (startDate) appointments = appointments.filter(a => a.date >= startDate);
+  if (endDate) appointments = appointments.filter(a => a.date <= endDate);
   if (practitionerId) appointments = appointments.filter(a => a.practitionerId === practitionerId);
   if (patientId) appointments = appointments.filter(a => a.patientId === patientId);
+  if (status) appointments = appointments.filter(a => a.status === status);
+  
+  // Sort by date and time
+  appointments.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return a.time.localeCompare(b.time);
+  });
   
   const enriched = appointments.map(a => ({
     ...a,
@@ -203,18 +448,183 @@ app.get('/api/appointments', (req, res) => {
   res.json(enriched);
 });
 
+// Get single appointment
+app.get('/api/appointments/:id', (req, res) => {
+  const appointment = db.appointments.find(a => a.id === req.params.id);
+  if (!appointment) return res.status(404).json({ error: 'Appointment not found' });
+  
+  res.json({
+    ...appointment,
+    patient: db.patients.find(p => p.id === appointment.patientId),
+    practitioner: db.practitioners.find(p => p.id === appointment.practitionerId),
+    service: db.services.find(s => s.id === appointment.serviceId)
+  });
+});
+
+// Create new appointment with availability check
 app.post('/api/appointments', (req, res) => {
-  const appointment = { id: uuidv4(), ...req.body, createdAt: new Date() };
+  const { patientId, practitionerId, serviceId, date, time, notes } = req.body;
+  
+  // Validation
+  if (!patientId || !practitionerId || !serviceId || !date || !time) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  
+  // Check practitioner exists
+  const practitioner = db.practitioners.find(p => p.id === practitionerId);
+  if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
+  if (!practitioner.isActive) return res.status(400).json({ error: 'Practitioner is not active' });
+  
+  // Check service exists
+  const service = db.services.find(s => s.id === serviceId);
+  if (!service) return res.status(404).json({ error: 'Service not found' });
+  if (!service.isActive) return res.status(400).json({ error: 'Service is not active' });
+  
+  // Check for conflicts
+  const existingAppointment = db.appointments.find(a => 
+    a.practitionerId === practitionerId && 
+    a.date === date && 
+    a.time === time && 
+    a.status !== 'cancelled'
+  );
+  
+  if (existingAppointment) {
+    return res.status(409).json({ 
+      error: 'Time slot is not available',
+      conflict: existingAppointment
+    });
+  }
+  
+  // Check practitioner's working hours
+  const dayOfWeek = new Date(date).toLocaleDateString('en-US', { weekday: 'lowercase' });
+  const workingDay = practitioner.workingHours?.[dayOfWeek];
+  
+  if (workingDay && !workingDay.enabled) {
+    return res.status(400).json({ error: 'Practitioner does not work on this day' });
+  }
+  
+  if (workingDay && (time < workingDay.start || time > workingDay.end)) {
+    return res.status(400).json({ 
+      error: 'Time is outside working hours',
+      workingHours: workingDay
+    });
+  }
+  
+  const appointment = { 
+    id: uuidv4(), 
+    patientId, 
+    practitionerId, 
+    serviceId, 
+    date, 
+    time, 
+    duration: service.duration,
+    notes: notes || '',
+    status: 'confirmed',
+    createdAt: new Date() 
+  };
+  
   db.appointments.push(appointment);
+  
+  const patient = db.patients.find(p => p.id === patientId);
+  
   db.agentActivities.unshift({
     id: uuidv4(),
     agentType: 'scheduling',
-    action: 'New appointment booked',
+    action: `New appointment booked: ${service.name} for ${patient?.firstName} ${patient?.lastName} with ${practitioner.name}`,
+    patientId,
+    timestamp: new Date(),
+    status: 'completed'
+  });
+  
+  res.status(201).json({
+    ...appointment,
+    patient,
+    practitioner,
+    service
+  });
+});
+
+// Update appointment
+app.patch('/api/appointments/:id', (req, res) => {
+  const appointment = db.appointments.find(a => a.id === req.params.id);
+  if (!appointment) return res.status(404).json({ error: 'Appointment not found' });
+  
+  const { date, time, status, notes, practitionerId, serviceId } = req.body;
+  
+  // Check for conflicts if changing time/practitioner
+  if ((date !== undefined && date !== appointment.date) || 
+      (time !== undefined && time !== appointment.time) ||
+      (practitionerId !== undefined && practitionerId !== appointment.practitionerId)) {
+    
+    const newPractitionerId = practitionerId || appointment.practitionerId;
+    const newDate = date || appointment.date;
+    const newTime = time || appointment.time;
+    
+    const existingAppointment = db.appointments.find(a => 
+      a.id !== appointment.id &&
+      a.practitionerId === newPractitionerId && 
+      a.date === newDate && 
+      a.time === newTime && 
+      a.status !== 'cancelled'
+    );
+    
+    if (existingAppointment) {
+      return res.status(409).json({ 
+        error: 'Time slot is not available',
+        conflict: existingAppointment
+      });
+    }
+  }
+  
+  if (date !== undefined) appointment.date = date;
+  if (time !== undefined) appointment.time = time;
+  if (status !== undefined) appointment.status = status;
+  if (notes !== undefined) appointment.notes = notes;
+  if (practitionerId !== undefined) appointment.practitionerId = practitionerId;
+  if (serviceId !== undefined) {
+    appointment.serviceId = serviceId;
+    const service = db.services.find(s => s.id === serviceId);
+    if (service) appointment.duration = service.duration;
+  }
+  
+  appointment.updatedAt = new Date();
+  
+  res.json({
+    ...appointment,
+    patient: db.patients.find(p => p.id === appointment.patientId),
+    practitioner: db.practitioners.find(p => p.id === appointment.practitionerId),
+    service: db.services.find(s => s.id === appointment.serviceId)
+  });
+});
+
+// Cancel appointment
+app.post('/api/appointments/:id/cancel', (req, res) => {
+  const appointment = db.appointments.find(a => a.id === req.params.id);
+  if (!appointment) return res.status(404).json({ error: 'Appointment not found' });
+  
+  appointment.status = 'cancelled';
+  appointment.cancelledAt = new Date();
+  appointment.cancellationReason = req.body.reason || '';
+  
+  db.agentActivities.unshift({
+    id: uuidv4(),
+    agentType: 'scheduling',
+    action: `Appointment cancelled: ${appointment.date} at ${appointment.time}`,
     patientId: appointment.patientId,
     timestamp: new Date(),
     status: 'completed'
   });
-  res.status(201).json(appointment);
+  
+  res.json(appointment);
+});
+
+// Delete appointment (hard delete)
+app.delete('/api/appointments/:id', (req, res) => {
+  const index = db.appointments.findIndex(a => a.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: 'Appointment not found' });
+  
+  db.appointments.splice(index, 1);
+  res.status(204).send();
 });
 
 app.post('/api/voice-webhook', (req, res) => {
@@ -493,18 +903,132 @@ app.delete('/api/notes/:id', (req, res) => {
   res.status(204).send();
 });
 
+// ==================== AVAILABILITY SYSTEM ====================
+
 app.get('/api/availability', (req, res) => {
-  const { date, practitionerId } = req.query;
-  const slots = [];
-  for (let hour = 8; hour < 19; hour++) {
-    const time = `${hour.toString().padStart(2, '0')}:00`;
-    const existing = db.appointments.find(a => 
-      a.date === date && a.time === time && a.practitionerId === practitionerId && a.status !== 'cancelled'
-    );
-    if (!existing) slots.push({ time, available: true });
+  const { date, practitionerId, serviceId, duration } = req.query;
+  
+  if (!date) return res.status(400).json({ error: 'Date is required' });
+  
+  const requestedDuration = parseInt(duration) || 30;
+  const service = serviceId ? db.services.find(s => s.id === serviceId) : null;
+  const actualDuration = service ? service.duration : requestedDuration;
+  
+  // If specific practitioner requested
+  if (practitionerId) {
+    const practitioner = db.practitioners.find(p => p.id === practitionerId);
+    if (!practitioner) return res.status(404).json({ error: 'Practitioner not found' });
+    
+    const slots = getAvailableSlots(date, practitioner, actualDuration);
+    
+    return res.json({
+      date,
+      practitionerId,
+      serviceId,
+      duration: actualDuration,
+      slots
+    });
   }
-  res.json({ date, practitionerId, slots });
+  
+  // Return availability for all practitioners
+  const allAvailability = db.practitioners
+    .filter(p => p.isActive !== false)
+    .map(practitioner => ({
+      practitioner,
+      slots: getAvailableSlots(date, practitioner, actualDuration)
+    }))
+    .filter(a => a.slots.length > 0);
+  
+  res.json({
+    date,
+    serviceId,
+    duration: actualDuration,
+    practitioners: allAvailability
+  });
 });
+
+// Helper function to get available slots
+function getAvailableSlots(date, practitioner, duration = 30) {
+  const slots = [];
+  const dayOfWeek = new Date(date).toLocaleDateString('en-US', { weekday: 'lowercase' });
+  const workingDay = practitioner.workingHours?.[dayOfWeek];
+  
+  if (!workingDay || !workingDay.enabled) return slots;
+  
+  const startHour = parseInt(workingDay.start.split(':')[0]);
+  const startMinute = parseInt(workingDay.start.split(':')[1]);
+  const endHour = parseInt(workingDay.end.split(':')[0]);
+  const endMinute = parseInt(workingDay.end.split(':')[1]);
+  
+  // Generate slots every 15 minutes
+  for (let hour = startHour; hour < endHour || (hour === endHour && 0 < endMinute); hour++) {
+    for (let minute = (hour === startHour ? startMinute : 0); minute < 60; minute += 15) {
+      if (hour === endHour && minute >= endMinute) break;
+      
+      const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+      
+      // Check if slot is available
+      const slotEndHour = hour + Math.floor((minute + duration) / 60);
+      const slotEndMinute = (minute + duration) % 60;
+      
+      // Check for conflicts with existing appointments
+      const hasConflict = db.appointments.some(a => 
+        a.practitionerId === practitioner.id && 
+        a.date === date && 
+        a.status !== 'cancelled' &&
+        isTimeOverlapping(time, duration, a.time, a.duration || 30)
+      );
+      
+      if (!hasConflict) {
+        slots.push({
+          time,
+          available: true,
+          practitionerId: practitioner.id,
+          practitionerName: practitioner.name
+        });
+      }
+    }
+  }
+  
+  return slots;
+}
+
+// Helper function to check time overlap
+function isTimeOverlapping(start1, duration1, start2, duration2) {
+  const toMinutes = (time) => {
+    const [h, m] = time.split(':').map(Number);
+    return h * 60 + m;
+  };
+  
+  const s1 = toMinutes(start1);
+  const e1 = s1 + duration1;
+  const s2 = toMinutes(start2);
+  const e2 = s2 + duration2;
+  
+  return s1 < e2 && s2 < e1;
+}
+
+// Helper function to get next available slot
+function getNextAvailableSlot(practitionerId) {
+  const practitioner = db.practitioners.find(p => p.id === practitionerId);
+  if (!practitioner) return null;
+  
+  const today = new Date();
+  for (let i = 0; i < 14; i++) {
+    const date = format(addDays(today, i), 'yyyy-MM-dd');
+    const slots = getAvailableSlots(date, practitioner, 30);
+    if (slots.length > 0) {
+      return { date, time: slots[0].time };
+    }
+  }
+  return null;
+}
+
+// Helper function to get random color
+function getRandomColor() {
+  const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
 
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 

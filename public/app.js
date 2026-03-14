@@ -71,6 +71,8 @@ function render() {
                     ${currentView === 'agents' ? renderAgents() : ''}
                     ${currentView === 'voice' ? renderVoiceAI() : ''}
                     ${currentView === 'notes' ? renderNotes() : ''}
+                    ${currentView === 'practitioners' ? renderPractitioners() : ''}
+                    ${currentView === 'services' ? renderServices() : ''}
                 </main>
             </div>
         </div>
@@ -83,6 +85,8 @@ function renderSidebar() {
         { id: 'calendar', icon: 'fa-calendar', label: 'Calendar' },
         { id: 'patients', icon: 'fa-users', label: 'Patients' },
         { id: 'notes', icon: 'fa-file-medical', label: 'Notes', badge: 'AI' },
+        { id: 'practitioners', icon: 'fa-user-md', label: 'Practitioners' },
+        { id: 'services', icon: 'fa-list', label: 'Services' },
         { id: 'voice', icon: 'fa-phone', label: 'Voice AI', badge: 'LIVE' },
         { id: 'agents', icon: 'fa-robot', label: 'AI Agents' },
     ];
@@ -911,5 +915,743 @@ async function saveNote(noteId) {
     }
 }
 
+// ==================== PRACTITIONERS MANAGEMENT ====================
+
+function renderPractitioners() {
+    return `
+        <div class="space-y-6">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <div class="flex items-center justify-between mb-6">
+                    <div>
+                        <h3 class="font-bold text-gray-800 text-xl">Practitioners</h3>
+                        <p class="text-sm text-gray-500 mt-1">Manage your team and their schedules</p>
+                    </div>
+                    <button onclick="showAddPractitionerModal()" class="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 transition-colors">
+                        <i class="fa-solid fa-plus mr-2"></i>Add Practitioner
+                    </button>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    ${practitioners.map(p => `
+                        <div class="border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow">
+                            <div class="flex items-start justify-between mb-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold" style="background: ${p.color}">
+                                        ${p.name.split(' ').map(n => n[0]).join('')}
+                                    </div>
+                                    <div>
+                                        <h4 class="font-semibold text-gray-800">${p.name}</h4>
+                                        <p class="text-sm text-gray-500">${p.role}</p>
+                                    </div>
+                                </div>
+                                <span class="px-2 py-1 rounded-full text-xs font-medium ${p.isActive !== false ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}">
+                                    ${p.isActive !== false ? 'Active' : 'Inactive'}
+                                </span>
+                            </div>
+                            
+                            <div class="space-y-2 text-sm text-gray-600 mb-4">
+                                ${p.email ? `<p><i class="fa-solid fa-envelope w-5 text-gray-400"></i> ${p.email}</p>` : ''}
+                                ${p.phone ? `<p><i class="fa-solid fa-phone w-5 text-gray-400"></i> ${p.phone}</p>` : ''}
+                                <p><i class="fa-solid fa-calendar-check w-5 text-gray-400"></i> ${p.appointmentCount || 0} appointments</p>
+                            </div>
+                            
+                            <div class="flex gap-2">
+                                <button onclick="viewPractitionerCalendar('${p.id}')" class="flex-1 py-2 bg-gray-50 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors">
+                                    View Calendar
+                                </button>
+                                <button onclick="editPractitioner('${p.id}')" class="px-3 py-2 bg-gray-50 text-gray-700 rounded-lg text-sm hover:bg-gray-100 transition-colors">
+                                    <i class="fa-solid fa-gear"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function showAddPractitionerModal() {
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    modal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-auto">
+            <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-xl font-bold text-gray-800">Add New Practitioner</h3>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa-solid fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
+                    <input type="text" id="practitioner-name" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="e.g., Dr. Jane Smith">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Role *</label>
+                    <input type="text" id="practitioner-role" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="e.g., Senior Physiotherapist">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <input type="email" id="practitioner-email" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="jane@example.com">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                        <input type="tel" id="practitioner-phone" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="+44...">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Color</label>
+                    <div class="flex gap-2 flex-wrap">
+                        ${['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'].map(color => `
+                            <button type="button" onclick="selectPractitionerColor(this, '${color}')" class="w-8 h-8 rounded-full border-2 border-transparent hover:scale-110 transition-transform color-option" style="background: ${color}" data-color="${color}"></button>
+                        `).join('')}
+                    </div>
+                    <input type="hidden" id="practitioner-color" value="#3b82f6">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Bio</label>
+                    <textarea id="practitioner-bio" rows="3" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="Brief description of specializations and experience..."></textarea>
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
+                <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
+                <button onclick="savePractitioner()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">Add Practitioner</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+function selectPractitionerColor(btn, color) {
+    document.querySelectorAll('.color-option').forEach(b => b.classList.remove('ring-2', 'ring-offset-2', 'ring-gray-400'));
+    btn.classList.add('ring-2', 'ring-offset-2', 'ring-gray-400');
+    document.getElementById('practitioner-color').value = color;
+}
+
+async function savePractitioner() {
+    const name = document.getElementById('practitioner-name').value;
+    const role = document.getElementById('practitioner-role').value;
+    const email = document.getElementById('practitioner-email').value;
+    const phone = document.getElementById('practitioner-phone').value;
+    const color = document.getElementById('practitioner-color').value;
+    const bio = document.getElementById('practitioner-bio').value;
+    
+    if (!name || !role) {
+        alert('Name and role are required');
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/practitioners', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, role, email, phone, color, bio })
+        });
+        
+        if (res.ok) {
+            const practitioner = await res.json();
+            practitioners.push(practitioner);
+            document.querySelector('.fixed').remove();
+            render();
+        } else {
+            const error = await res.json();
+            alert(error.error || 'Failed to add practitioner');
+        }
+    } catch (err) {
+        console.error('Error:', err);
+        alert('Failed to add practitioner');
+    }
+}
+
+function viewPractitionerCalendar(practitionerId) {
+    currentView = 'calendar';
+    selectedPractitioner = practitionerId;
+    render();
+}
+
+function editPractitioner(practitionerId) {
+    const practitioner = practitioners.find(p => p.id === practitionerId);
+    if (!practitioner) return;
+    
+    alert(`Edit practitioner: ${practitioner.name}\n\nThis would open an edit modal with full settings including working hours.`);
+}
+
+// ==================== SERVICES MANAGEMENT ====================
+
+function renderServices() {
+    return `
+        <div class="space-y-6">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <div class="flex items-center justify-between mb-6">
+                    <div>
+                        <h3 class="font-bold text-gray-800 text-xl">Services & Appointment Types</h3>
+                        <p class="text-sm text-gray-500 mt-1">Manage treatments and booking options</p>
+                    </div>
+                    <button onclick="showAddServiceModal()" class="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 transition-colors">
+                        <i class="fa-solid fa-plus mr-2"></i>Add Service
+                    </button>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    ${services.map(s => `
+                        <div class="border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow">
+                            <div class="flex items-start justify-between mb-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-lg flex items-center justify-center text-white" style="background: ${s.color}">
+                                        <i class="fa-solid fa-hand-holding-medical"></i>
+                                    </div>
+                                    <div>
+                                        <h4 class="font-semibold text-gray-800">${s.name}</h4>
+                                        <p class="text-sm text-gray-500">${s.category || 'General'}</p>
+                                    </div>
+                                </div>
+                                <span class="px-2 py-1 rounded-full text-xs font-medium ${s.isActive !== false ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}">
+                                    ${s.isActive !== false ? 'Active' : 'Inactive'}
+                                </span>
+                            </div>
+                            
+                            <div class="space-y-2 text-sm text-gray-600 mb-4">
+                                <div class="flex justify-between">
+                                    <span><i class="fa-solid fa-clock w-5 text-gray-400"></i> Duration</span>
+                                    <span class="font-medium">${s.duration} min</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span><i class="fa-solid fa-pound-sign w-5 text-gray-400"></i> Price</span>
+                                    <span class="font-medium">£${s.price}</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span><i class="fa-solid fa-calendar w-5 text-gray-400"></i> Bookings</span>
+                                    <span class="font-medium">${s.appointmentCount || 0}</span>
+                                </div>
+                            </div>
+                            
+                            ${s.description ? `<p class="text-sm text-gray-500 mb-4">${s.description}</p>` : ''}
+                            
+                            <div class="flex gap-2">
+                                <button onclick="editService('${s.id}')" class="flex-1 py-2 bg-gray-50 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors">
+                                    Edit
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function showAddServiceModal() {
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    modal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-auto">
+            <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-xl font-bold text-gray-800">Add New Service</h3>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa-solid fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Service Name *</label>
+                    <input type="text" id="service-name" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="e.g., Sports Massage">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Duration (min) *</label>
+                        <input type="number" id="service-duration" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="30" min="5" step="5">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Price (£) *</label>
+                        <input type="number" id="service-price" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="50" min="0" step="0.01">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                    <select id="service-category" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <option value="consultation">Consultation</option>
+                        <option value="treatment">Treatment</option>
+                        <option value="massage">Massage</option>
+                        <option value="assessment">Assessment</option>
+                        <option value="home-visit">Home Visit</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Color</label>
+                    <div class="flex gap-2 flex-wrap">
+                        ${['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'].map(color => `
+                            <button type="button" onclick="selectServiceColor(this, '${color}')" class="w-8 h-8 rounded-full border-2 border-transparent hover:scale-110 transition-transform service-color-option" style="background: ${color}" data-color="${color}"></button>
+                        `).join('')}
+                    </div>
+                    <input type="hidden" id="service-color" value="#3b82f6">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                    <textarea id="service-description" rows="3" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="Describe the service..."></textarea>
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
+                <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
+                <button onclick="saveService()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">Add Service</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+function selectServiceColor(btn, color) {
+    document.querySelectorAll('.service-color-option').forEach(b => b.classList.remove('ring-2', 'ring-offset-2', 'ring-gray-400'));
+    btn.classList.add('ring-2', 'ring-offset-2', 'ring-gray-400');
+    document.getElementById('service-color').value = color;
+}
+
+async function saveService() {
+    const name = document.getElementById('service-name').value;
+    const duration = document.getElementById('service-duration').value;
+    const price = document.getElementById('service-price').value;
+    const category = document.getElementById('service-category').value;
+    const color = document.getElementById('service-color').value;
+    const description = document.getElementById('service-description').value;
+    
+    if (!name || !duration || !price) {
+        alert('Name, duration, and price are required');
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/services', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, duration: parseInt(duration), price: parseFloat(price), category, color, description })
+        });
+        
+        if (res.ok) {
+            const service = await res.json();
+            services.push(service);
+            document.querySelector('.fixed').remove();
+            render();
+        } else {
+            const error = await res.json();
+            alert(error.error || 'Failed to add service');
+        }
+    } catch (err) {
+        console.error('Error:', err);
+        alert('Failed to add service');
+    }
+}
+
+function editService(serviceId) {
+    const service = services.find(s => s.id === serviceId);
+    if (!service) return;
+    
+    alert(`Edit service: ${service.name}\n\nThis would open an edit modal to modify the service details.`);
+}
+
+// ==================== ENHANCED CALENDAR ====================
+
+let selectedPractitioner = null;
+let selectedDate = new Date();
+let calendarView = 'week'; // 'day', 'week', 'month'
+
+function renderCalendar() {
+    const practitioner = selectedPractitioner ? practitioners.find(p => p.id === selectedPractitioner) : null;
+    
+    return `
+        <div class="space-y-4">
+            <!-- Calendar Header -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <h3 class="font-bold text-gray-800 text-lg">
+                            ${practitioner ? `${practitioner.name}'s Calendar` : 'All Practitioners'}
+                        </h3>
+                        <div class="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+                            <button onclick="changeDate(-1)" class="p-2 hover:bg-white rounded-lg transition-colors">
+                                <i class="fa-solid fa-chevron-left"></i>
+                            </button>
+                            <span class="px-4 font-medium text-gray-700">
+                                ${selectedDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
+                            </span>
+                            <button onclick="changeDate(1)" class="p-2 hover:bg-white rounded-lg transition-colors">
+                                <i class="fa-solid fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center gap-3">
+                        <!-- Practitioner Filter -->
+                        <select onchange="filterByPractitioner(this.value)" class="px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            <option value="">All Practitioners</option>
+                            ${practitioners.map(p => `<option value="${p.id}" ${selectedPractitioner === p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
+                        </select>
+                        
+                        <!-- View Toggle -->
+                        <div class="flex bg-gray-100 rounded-lg p-1">
+                            <button onclick="setCalendarView('day')" class="px-3 py-1.5 rounded-lg text-sm ${calendarView === 'day' ? 'bg-white shadow-sm' : 'text-gray-600'}">Day</button>
+                            <button onclick="setCalendarView('week')" class="px-3 py-1.5 rounded-lg text-sm ${calendarView === 'week' ? 'bg-white shadow-sm' : 'text-gray-600'}">Week</button>
+                        </div>
+                        
+                        <button onclick="showBookAppointmentModal()" class="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600">
+                            <i class="fa-solid fa-plus mr-2"></i>Book
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Calendar Grid -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                ${renderCalendarGrid()}
+            </div>
+        </div>
+    `;
+}
+
+function renderCalendarGrid() {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const hours = Array.from({length: 12}, (_, i) => i + 8); // 8am to 7pm
+    
+    // Get current week's dates
+    const weekStart = new Date(selectedDate);
+    weekStart.setDate(selectedDate.getDate() - selectedDate.getDay() + 1); // Monday
+    
+    const weekDates = days.map((_, i) => {
+        const date = new Date(weekStart);
+        date.setDate(weekStart.getDate() + i);
+        return date;
+    });
+    
+    // Filter appointments for current view
+    let viewAppointments = appointments;
+    if (selectedPractitioner) {
+        viewAppointments = appointments.filter(a => a.practitionerId === selectedPractitioner);
+    }
+    
+    return `
+        <div class="grid grid-cols-8 border-b border-gray-200">
+            <div class="p-3 border-r border-gray-200 bg-gray-50">
+                <span class="text-xs font-medium text-gray-500">Time</span>
+            </div>
+            ${days.map((day, i) => {
+                const date = weekDates[i];
+                const isToday = date.toDateString() === new Date().toDateString();
+                const dateStr = date.toISOString().split('T')[0];
+                return `
+                    <div class="p-3 text-center border-r border-gray-200 ${isToday ? 'bg-blue-50' : 'bg-gray-50'} cursor-pointer hover:bg-gray-100" onclick="selectDate('${dateStr}')">
+                        <p class="text-xs font-medium text-gray-500">${day}</p>
+                        <p class="text-lg font-bold ${isToday ? 'text-blue-600' : 'text-gray-700'}">${date.getDate()}</p>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+        
+        <div class="overflow-y-auto max-h-[600px]">
+            ${hours.map(hour => `
+                <div class="grid grid-cols-8 border-b border-gray-100 min-h-[80px]">
+                    <div class="p-2 border-r border-gray-200 bg-gray-50 text-xs text-gray-500 text-right">
+                        ${hour}:00
+                    </div>
+                    ${days.map((_, dayIndex) => {
+                        const date = weekDates[dayIndex];
+                        const dateStr = date.toISOString().split('T')[0];
+                        const timeStr = `${hour.toString().padStart(2, '0')}:00`;
+                        
+                        // Find appointments at this slot
+                        const slotAppointments = viewAppointments.filter(a => 
+                            a.date === dateStr && 
+                            a.time === timeStr &&
+                            a.status !== 'cancelled'
+                        );
+                        
+                        return `
+                            <div class="border-r border-gray-200 p-1 relative hover:bg-gray-50 cursor-pointer" onclick="showBookAppointmentModal('${dateStr}', '${timeStr}')">
+                                ${slotAppointments.map(apt => {
+                                    const practitioner = practitioners.find(p => p.id === apt.practitionerId);
+                                    const patient = patients.find(p => p.id === apt.patientId);
+                                    const service = services.find(s => s.id === apt.serviceId);
+                                    return `
+                                        <div class="mb-1 p-2 rounded text-xs text-white truncate" style="background: ${practitioner?.color || '#3b82f6'}" onclick="event.stopPropagation(); viewAppointment('${apt.id}')">
+                                            <p class="font-medium truncate">${patient?.firstName} ${patient?.lastName}</p>
+                                            <p class="opacity-90 truncate">${service?.name}</p>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function changeDate(direction) {
+    selectedDate.setDate(selectedDate.getDate() + (direction * 7));
+    selectedDate = new Date(selectedDate); // Trigger reactivity
+    render();
+}
+
+function selectDate(dateStr) {
+    selectedDate = new Date(dateStr);
+    calendarView = 'day';
+    render();
+}
+
+function filterByPractitioner(practitionerId) {
+    selectedPractitioner = practitionerId || null;
+    render();
+}
+
+function setCalendarView(view) {
+    calendarView = view;
+    render();
+}
+
+function showBookAppointmentModal(date = null, time = null) {
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    modal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-auto">
+            <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-xl font-bold text-gray-800">Book Appointment</h3>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa-solid fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Patient *</label>
+                    <select id="apt-patient" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        <option value="">Select patient...</option>
+                        ${patients.map(p => `<option value="${p.id}">${p.firstName} ${p.lastName}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Practitioner *</label>
+                    <select id="apt-practitioner" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" onchange="loadAvailability()">
+                        <option value="">Select practitioner...</option>
+                        ${practitioners.map(p => `<option value="${p.id}" ${selectedPractitioner === p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Service *</label>
+                    <select id="apt-service" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" onchange="loadAvailability()">
+                        <option value="">Select service...</option>
+                        ${services.map(s => `<option value="${s.id}">${s.name} (${s.duration} min - £${s.price})</option>`).join('')}
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+                        <input type="date" id="apt-date" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" value="${date || ''}" onchange="loadAvailability()">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Time *</label>
+                        <select id="apt-time" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            <option value="">Select time...</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                    <textarea id="apt-notes" rows="2" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="Any special requirements..."></textarea>
+                </div>
+                <div id="availability-loading" class="hidden text-sm text-gray-500">
+                    <i class="fa-solid fa-spinner fa-spin mr-2"></i>Checking availability...
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
+                <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
+                <button onclick="bookAppointment()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">Book Appointment</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    
+    if (date && time) {
+        setTimeout(() => loadAvailability(time), 100);
+    }
+}
+
+async function loadAvailability(preselectedTime = null) {
+    const practitionerId = document.getElementById('apt-practitioner').value;
+    const serviceId = document.getElementById('apt-service').value;
+    const date = document.getElementById('apt-date').value;
+    const timeSelect = document.getElementById('apt-time');
+    const loadingEl = document.getElementById('availability-loading');
+    
+    if (!practitionerId || !date) return;
+    
+    const service = services.find(s => s.id === serviceId);
+    const duration = service ? service.duration : 30;
+    
+    loadingEl.classList.remove('hidden');
+    timeSelect.innerHTML = '<option value="">Select time...</option>';
+    
+    try {
+        const res = await fetch(`/api/availability?date=${date}&practitionerId=${practitionerId}&duration=${duration}`);
+        const data = await res.json();
+        
+        data.slots.forEach(slot => {
+            const option = document.createElement('option');
+            option.value = slot.time;
+            option.textContent = slot.time;
+            if (preselectedTime && slot.time === preselectedTime) {
+                option.selected = true;
+            }
+            timeSelect.appendChild(option);
+        });
+    } catch (err) {
+        console.error('Failed to load availability:', err);
+    } finally {
+        loadingEl.classList.add('hidden');
+    }
+}
+
+async function bookAppointment() {
+    const patientId = document.getElementById('apt-patient').value;
+    const practitionerId = document.getElementById('apt-practitioner').value;
+    const serviceId = document.getElementById('apt-service').value;
+    const date = document.getElementById('apt-date').value;
+    const time = document.getElementById('apt-time').value;
+    const notes = document.getElementById('apt-notes').value;
+    
+    if (!patientId || !practitionerId || !serviceId || !date || !time) {
+        alert('Please fill in all required fields');
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/appointments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ patientId, practitionerId, serviceId, date, time, notes })
+        });
+        
+        if (res.ok) {
+            const appointment = await res.json();
+            appointments.push(appointment);
+            document.querySelector('.fixed').remove();
+            render();
+            
+            // Show success message
+            const patient = patients.find(p => p.id === patientId);
+            const practitioner = practitioners.find(p => p.id === practitionerId);
+            alert(`Appointment booked successfully!\n\n${patient.firstName} ${patient.lastName} with ${practitioner.name}\n${date} at ${time}`);
+        } else {
+            const error = await res.json();
+            alert(error.error || 'Failed to book appointment');
+        }
+    } catch (err) {
+        console.error('Error:', err);
+        alert('Failed to book appointment');
+    }
+}
+
+function viewAppointment(appointmentId) {
+    const apt = appointments.find(a => a.id === appointmentId);
+    if (!apt) return;
+    
+    const patient = patients.find(p => p.id === apt.patientId);
+    const practitioner = practitioners.find(p => p.id === apt.practitionerId);
+    const service = services.find(s => s.id === apt.serviceId);
+    
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    modal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4">
+            <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-xl font-bold text-gray-800">Appointment Details</h3>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa-solid fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold" style="background: ${practitioner?.color || '#3b82f6'}">
+                        ${patient?.firstName?.[0]}${patient?.lastName?.[0]}
+                    </div>
+                    <div>
+                        <p class="font-semibold text-gray-800">${patient?.firstName} ${patient?.lastName}</p>
+                        <p class="text-sm text-gray-500">${service?.name}</p>
+                    </div>
+                </div>
+                
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between py-2 border-b border-gray-100">
+                        <span class="text-gray-500">Date</span>
+                        <span class="font-medium">${apt.date}</span>
+                    </div>
+                    <div class="flex justify-between py-2 border-b border-gray-100">
+                        <span class="text-gray-500">Time</span>
+                        <span class="font-medium">${apt.time}</span>
+                    </div>
+                    <div class="flex justify-between py-2 border-b border-gray-100">
+                        <span class="text-gray-500">Duration</span>
+                        <span class="font-medium">${service?.duration || 30} minutes</span>
+                    </div>
+                    <div class="flex justify-between py-2 border-b border-gray-100">
+                        <span class="text-gray-500">Practitioner</span>
+                        <span class="font-medium">${practitioner?.name}</span>
+                    </div>
+                    <div class="flex justify-between py-2 border-b border-gray-100">
+                        <span class="text-gray-500">Price</span>
+                        <span class="font-medium">£${service?.price}</span>
+                    </div>
+                    <div class="flex justify-between py-2">
+                        <span class="text-gray-500">Status</span>
+                        <span class="px-2 py-1 rounded-full text-xs font-medium ${apt.status === 'confirmed' ? 'bg-green-100 text-green-700' : apt.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}">${apt.status}</span>
+                    </div>
+                </div>
+                
+                ${apt.notes ? `
+                    <div class="bg-gray-50 rounded-lg p-3">
+                        <p class="text-sm text-gray-500 mb-1">Notes:</p>
+                        <p class="text-sm text-gray-700">${apt.notes}</p>
+                    </div>
+                ` : ''}
+            </div>
+            <div class="p-6 border-t border-gray-100 flex gap-3">
+                ${apt.status !== 'cancelled' ? `
+                    <button onclick="cancelAppointment('${apt.id}')" class="flex-1 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50">
+                        Cancel
+                    </button>
+                ` : ''}
+                <button onclick="this.closest('.fixed').remove()" class="flex-1 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+                    Close
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+async function cancelAppointment(appointmentId) {
+    if (!confirm('Are you sure you want to cancel this appointment?')) return;
+    
+    try {
+        const res = await fetch(`/api/appointments/${appointmentId}/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (res.ok) {
+            const apt = appointments.find(a => a.id === appointmentId);
+            if (apt) apt.status = 'cancelled';
+            document.querySelector('.fixed').remove();
+            render();
+            alert('Appointment cancelled');
+        } else {
+            alert('Failed to cancel appointment');
+        }
+    } catch (err) {
+        console.error('Error:', err);
+        alert('Failed to cancel appointment');
+    }
+}
+
 // Start the app
 init();
+
