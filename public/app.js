@@ -323,66 +323,490 @@ function renderCalendar() {
 
 function renderPatients() {
     return `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100">
-            <div class="p-6 border-b border-gray-100 flex items-center justify-between">
-                <div class="flex items-center gap-4">
-                    <h3 class="font-bold text-gray-800">Patients</h3>
-                    <div class="relative">
-                        <i class="fa-solid fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                        <input type="text" placeholder="Search patients..." class="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <div class="space-y-6">
+            <!-- Patient Stats -->
+            <div class="grid grid-cols-4 gap-4">
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-500 text-sm">Total Patients</p>
+                            <p class="text-2xl font-bold text-gray-800">${patients.length}</p>
+                        </div>
+                        <div class="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center">
+                            <i class="fa-solid fa-users text-blue-600 text-xl"></i>
+                        </div>
                     </div>
                 </div>
-                <button class="bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors">
-                    <i class="fa-solid fa-plus mr-2"></i>New Patient
-                </button>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-500 text-sm">Active</p>
+                            <p class="text-2xl font-bold text-green-600">${patients.filter(p => p.status === 'active').length}</p>
+                        </div>
+                        <div class="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center">
+                            <i class="fa-solid fa-user-check text-green-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-500 text-sm">New This Month</p>
+                            <p class="text-2xl font-bold text-purple-600">${patients.filter(p => {
+                                const created = new Date(p.createdAt);
+                                const now = new Date();
+                                return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear();
+                            }).length}</p>
+                        </div>
+                        <div class="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center">
+                            <i class="fa-solid fa-user-plus text-purple-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-500 text-sm">With Appointments</p>
+                            <p class="text-2xl font-bold text-amber-600">${patients.filter(p => p.totalAppointments > 0).length}</p>
+                        </div>
+                        <div class="w-12 h-12 rounded-lg bg-amber-100 flex items-center justify-center">
+                            <i class="fa-solid fa-calendar-check text-amber-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="overflow-x-auto">
-                <table class="w-full">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="text-left p-4 text-sm font-medium text-gray-600">Patient</th>
-                            <th class="text-left p-4 text-sm font-medium text-gray-600">Contact</th>
-                            <th class="text-left p-4 text-sm font-medium text-gray-600">Status</th>
-                            <th class="text-left p-4 text-sm font-medium text-gray-600">Last Visit</th>
-                            <th class="text-left p-4 text-sm font-medium text-gray-600">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${patients.slice(0, 10).map(patient => `
-                            <tr class="border-t border-gray-100 hover:bg-gray-50">
-                                <td class="p-4">
-                                    <div class="flex items-center gap-3">
-                                        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white font-medium">
-                                            ${patient.firstName[0]}${patient.lastName[0]}
-                                        </div>
-                                        <div>
-                                            <p class="font-medium text-gray-800">${patient.firstName} ${patient.lastName}</p>
-                                            <p class="text-xs text-gray-500">ID: ${patient.id}</p>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="p-4 text-sm text-gray-600">
-                                    <p>${patient.phone}</p>
-                                    <p class="text-xs text-gray-400">${patient.email}</p>
-                                </td>
-                                <td class="p-4">
-                                    <span class="px-2 py-1 rounded-full text-xs font-medium ${patient.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}">
-                                        ${patient.status}
-                                    </span>
-                                </td>
-                                <td class="p-4 text-sm text-gray-600">
-                                    ${new Date(patient.createdAt).toLocaleDateString('en-GB')}
-                                </td>
-                                <td class="p-4">
-                                    <button class="text-blue-500 hover:text-blue-700 text-sm font-medium">View</button>
-                                </td>
+
+            <!-- Patient List -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100">
+                <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <h3 class="font-bold text-gray-800 text-lg">Patient Directory</h3>
+                        <div class="relative">
+                            <i class="fa-solid fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                            <input type="text" id="patient-search" placeholder="Search by name, email, phone..." 
+                                class="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-80"
+                                onkeyup="searchPatients(this.value)">
+                        </div>
+                    </div>
+                    <button onclick="showAddPatientModal()" class="bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors">
+                        <i class="fa-solid fa-plus mr-2"></i>Add Patient
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="text-left p-4 text-sm font-medium text-gray-600">Patient</th>
+                                <th class="text-left p-4 text-sm font-medium text-gray-600">Contact</th>
+                                <th class="text-left p-4 text-sm font-medium text-gray-600">Status</th>
+                                <th class="text-left p-4 text-sm font-medium text-gray-600">Appointments</th>
+                                <th class="text-left p-4 text-sm font-medium text-gray-600">Last Visit</th>
+                                <th class="text-left p-4 text-sm font-medium text-gray-600">Actions</th>
                             </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody id="patients-table-body">
+                            ${renderPatientRows(patients.slice(0, 20))}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     `;
+}
+
+function renderPatientRows(patientsList) {
+    if (patientsList.length === 0) {
+        return `
+            <tr>
+                <td colspan="6" class="p-8 text-center text-gray-500">
+                    <i class="fa-solid fa-users text-4xl mb-3 text-gray-300"></i>
+                    <p>No patients found</p>
+                </td>
+            </tr>
+        `;
+    }
+
+    return patientsList.map(patient => {
+        const lastVisit = patient.lastAppointment ? new Date(patient.lastAppointment.date).toLocaleDateString('en-GB') : 'Never';
+        return `
+            <tr class="border-t border-gray-100 hover:bg-gray-50 cursor-pointer" onclick="viewPatientProfile('${patient.id}')">
+                <td class="p-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white font-medium">
+                            ${patient.firstName[0]}${patient.lastName[0]}
+                        </div>
+                        <div>
+                            <p class="font-medium text-gray-800">${patient.firstName} ${patient.lastName}</p>
+                            <p class="text-xs text-gray-500">${patient.dateOfBirth ? 'DOB: ' + patient.dateOfBirth : 'ID: ' + patient.id}</p>
+                        </div>
+                    </div>
+                </td>
+                <td class="p-4 text-sm text-gray-600">
+                    <p><i class="fa-solid fa-phone mr-2 text-gray-400"></i>${patient.phone || 'N/A'}</p>
+                    <p class="text-xs text-gray-400 mt-1"><i class="fa-solid fa-envelope mr-2"></i>${patient.email || 'N/A'}</p>
+                </td>
+                <td class="p-4">
+                    <span class="px-2 py-1 rounded-full text-xs font-medium ${patient.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}">
+                        ${patient.status}
+                    </span>
+                </td>
+                <td class="p-4 text-sm text-gray-600">
+                    <span class="font-medium">${patient.totalAppointments || 0}</span> total
+                    ${patient.nextAppointment ? `<br><span class="text-xs text-blue-600">Next: ${patient.nextAppointment.date}</span>` : ''}
+                </td>
+                <td class="p-4 text-sm text-gray-600">
+                    ${lastVisit}
+                </td>
+                <td class="p-4">
+                    <button onclick="event.stopPropagation(); bookForPatient('${patient.id}')" class="text-blue-500 hover:text-blue-700 text-sm font-medium mr-3">
+                        <i class="fa-solid fa-calendar-plus mr-1"></i>Book
+                    </button>
+                    <button onclick="event.stopPropagation(); viewPatientProfile('${patient.id}')" class="text-gray-500 hover:text-gray-700 text-sm font-medium">
+                        View
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function searchPatients(query) {
+    try {
+        const res = await fetch(`/api/patients?search=${encodeURIComponent(query)}`);
+        const filtered = await res.json();
+        document.getElementById('patients-table-body').innerHTML = renderPatientRows(filtered);
+    } catch (err) {
+        console.error('Search error:', err);
+    }
+}
+
+function showAddPatientModal() {
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    modal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-auto">
+            <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-xl font-bold text-gray-800">Add New Patient</h3>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa-solid fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
+                        <input type="text" id="patient-firstName" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="John">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
+                        <input type="text" id="patient-lastName" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="Smith">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                        <input type="tel" id="patient-phone" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="+44...">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <input type="email" id="patient-email" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="john@example.com">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
+                        <input type="date" id="patient-dateOfBirth" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Gender</label>
+                        <select id="patient-gender" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            <option value="">Select...</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                    <textarea id="patient-address" rows="2" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="Full address..."></textarea>
+                </div>
+                <div class="border-t border-gray-200 pt-4">
+                    <h4 class="font-medium text-gray-800 mb-3">Emergency Contact</h4>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Contact Name</label>
+                            <input type="text" id="patient-emergencyName" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Contact Phone</label>
+                            <input type="tel" id="patient-emergencyPhone" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                </div>
+                <div class="border-t border-gray-200 pt-4">
+                    <h4 class="font-medium text-gray-800 mb-3">Insurance</h4>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Provider</label>
+                            <input type="text" id="patient-insuranceProvider" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Policy Number</label>
+                            <input type="text" id="patient-insuranceNumber" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Medical History / Notes</label>
+                    <textarea id="patient-medicalHistory" rows="3" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="Any relevant medical history, allergies, medications..."></textarea>
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
+                <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
+                <button onclick="savePatient()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">Add Patient</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+async function savePatient() {
+    const data = {
+        firstName: document.getElementById('patient-firstName').value,
+        lastName: document.getElementById('patient-lastName').value,
+        phone: document.getElementById('patient-phone').value,
+        email: document.getElementById('patient-email').value,
+        dateOfBirth: document.getElementById('patient-dateOfBirth').value,
+        gender: document.getElementById('patient-gender').value,
+        address: document.getElementById('patient-address').value,
+        emergencyContactName: document.getElementById('patient-emergencyName').value,
+        emergencyContactPhone: document.getElementById('patient-emergencyPhone').value,
+        insuranceProvider: document.getElementById('patient-insuranceProvider').value,
+        insuranceNumber: document.getElementById('patient-insuranceNumber').value,
+        medicalHistory: document.getElementById('patient-medicalHistory').value
+    };
+
+    if (!data.firstName || !data.lastName) {
+        alert('First name and last name are required');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/patients', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (res.ok) {
+            const patient = await res.json();
+            patients.push(patient);
+            document.querySelector('.fixed').remove();
+            render();
+            alert(`Patient ${patient.firstName} ${patient.lastName} added successfully!`);
+        } else {
+            const error = await res.json();
+            alert(error.error || 'Failed to add patient');
+        }
+    } catch (err) {
+        console.error('Error:', err);
+        alert('Failed to add patient');
+    }
+}
+
+async function viewPatientProfile(patientId) {
+    try {
+        const res = await fetch(`/api/patients/${patientId}`);
+        const patient = await res.json();
+
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto';
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 my-8">
+                <!-- Header -->
+                <div class="p-6 border-b border-gray-100 flex items-start justify-between">
+                    <div class="flex items-center gap-4">
+                        <div class="w-16 h-16 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-2xl font-bold">
+                            ${patient.firstName[0]}${patient.lastName[0]}
+                        </div>
+                        <div>
+                            <h3 class="text-2xl font-bold text-gray-800">${patient.firstName} ${patient.lastName}</h3>
+                            <p class="text-gray-500">
+                                ${patient.dateOfBirth ? 'DOB: ' + new Date(patient.dateOfBirth).toLocaleDateString('en-GB') : ''}
+                                ${patient.gender ? '• ' + patient.gender.charAt(0).toUpperCase() + patient.gender.slice(1) : ''}
+                            </p>
+                            <span class="px-2 py-1 rounded-full text-xs font-medium ${patient.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'} mt-2 inline-block">
+                                ${patient.status}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="bookForPatient('${patient.id}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+                            <i class="fa-solid fa-calendar-plus mr-2"></i>Book
+                        </button>
+                        <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                            <i class="fa-solid fa-times text-xl"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-6 p-6">
+                    <!-- Left Column - Contact & Info -->
+                    <div class="space-y-6">
+                        <div class="bg-gray-50 rounded-xl p-4">
+                            <h4 class="font-semibold text-gray-800 mb-3">Contact Information</h4>
+                            <div class="space-y-2 text-sm">
+                                ${patient.phone ? `<p><i class="fa-solid fa-phone w-5 text-gray-400"></i> ${patient.phone}</p>` : ''}
+                                ${patient.email ? `<p><i class="fa-solid fa-envelope w-5 text-gray-400"></i> ${patient.email}</p>` : ''}
+                                ${patient.address ? `<p><i class="fa-solid fa-location-dot w-5 text-gray-400"></i> ${patient.address}</p>` : ''}
+                            </div>
+                        </div>
+
+                        ${patient.emergencyContactName ? `
+                            <div class="bg-gray-50 rounded-xl p-4">
+                                <h4 class="font-semibold text-gray-800 mb-3">Emergency Contact</h4>
+                                <div class="space-y-2 text-sm">
+                                    <p><i class="fa-solid fa-user w-5 text-gray-400"></i> ${patient.emergencyContactName}</p>
+                                    ${patient.emergencyContactPhone ? `<p><i class="fa-solid fa-phone w-5 text-gray-400"></i> ${patient.emergencyContactPhone}</p>` : ''}
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        ${patient.insuranceProvider ? `
+                            <div class="bg-gray-50 rounded-xl p-4">
+                                <h4 class="font-semibold text-gray-800 mb-3">Insurance</h4>
+                                <div class="space-y-2 text-sm">
+                                    <p><i class="fa-solid fa-shield w-5 text-gray-400"></i> ${patient.insuranceProvider}</p>
+                                    ${patient.insuranceNumber ? `<p class="text-gray-500">Policy: ${patient.insuranceNumber}</p>` : ''}
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        <div class="bg-gray-50 rounded-xl p-4">
+                            <h4 class="font-semibold text-gray-800 mb-3">Statistics</h4>
+                            <div class="grid grid-cols-2 gap-3 text-sm">
+                                <div class="text-center p-2 bg-white rounded-lg">
+                                    <p class="text-2xl font-bold text-blue-600">${patient.stats.totalAppointments}</p>
+                                    <p class="text-gray-500 text-xs">Appointments</p>
+                                </div>
+                                <div class="text-center p-2 bg-white rounded-lg">
+                                    <p class="text-2xl font-bold text-green-600">£${patient.stats.totalSpent}</p>
+                                    <p class="text-gray-500 text-xs">Total Spent</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Middle Column - Appointments -->
+                    <div class="col-span-2 space-y-6">
+                        <!-- Upcoming Appointments -->
+                        <div>
+                            <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                                <i class="fa-solid fa-calendar text-blue-500"></i>
+                                Upcoming Appointments
+                            </h4>
+                            ${patient.appointments.filter(a => a.date >= new Date().toISOString().split('T')[0] && a.status === 'confirmed').length === 0 ? `
+                                <p class="text-gray-500 text-sm">No upcoming appointments</p>
+                            ` : `
+                                <div class="space-y-2">
+                                    ${patient.appointments
+                                        .filter(a => a.date >= new Date().toISOString().split('T')[0] && a.status === 'confirmed')
+                                        .sort((a, b) => a.date.localeCompare(b.date))
+                                        .map(apt => `
+                                            <div class="border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+                                                <div>
+                                                    <p class="font-medium text-gray-800">${apt.service?.name}</p>
+                                                    <p class="text-sm text-gray-500">${apt.date} at ${apt.time} with ${apt.practitioner?.name}</p>
+                                                </div>
+                                                <span class="px-2 py-1 rounded-full text-xs bg-green-100 text-green-700">${apt.status}</span>
+                                            </div>
+                                        `).join('')}
+                                </div>
+                            `}
+                        </div>
+
+                        <!-- Past Appointments -->
+                        <div>
+                            <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                                <i class="fa-solid fa-history text-gray-500"></i>
+                                Appointment History
+                            </h4>
+                            ${patient.appointments.filter(a => a.date < new Date().toISOString().split('T')[0] || a.status === 'completed').length === 0 ? `
+                                <p class="text-gray-500 text-sm">No past appointments</p>
+                            ` : `
+                                <div class="space-y-2 max-h-60 overflow-y-auto">
+                                    ${patient.appointments
+                                        .filter(a => a.date < new Date().toISOString().split('T')[0] || a.status === 'completed')
+                                        .sort((a, b) => b.date.localeCompare(a.date))
+                                        .slice(0, 5)
+                                        .map(apt => `
+                                            <div class="border border-gray-200 rounded-lg p-3">
+                                                <div class="flex items-center justify-between mb-1">
+                                                    <p class="font-medium text-gray-800">${apt.service?.name}</p>
+                                                    <span class="text-xs text-gray-500">${apt.date}</span>
+                                                </div>
+                                                <p class="text-sm text-gray-500">with ${apt.practitioner?.name}</p>
+                                                ${apt.notes ? `<p class="text-xs text-gray-400 mt-1">${apt.notes}</p>` : ''}
+                                            </div>
+                                        `).join('')}
+                                </div>
+                            `}
+                        </div>
+
+                        <!-- Notes -->
+                        <div>
+                            <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                                <i class="fa-solid fa-file-medical text-purple-500"></i>
+                                Clinical Notes (${patient.notes.length})
+                            </h4>
+                            ${patient.notes.length === 0 ? `
+                                <p class="text-gray-500 text-sm">No notes yet</p>
+                            ` : `
+                                <div class="space-y-2 max-h-60 overflow-y-auto">
+                                    ${patient.notes.slice(0, 3).map(note => `
+                                        <div class="border border-gray-200 rounded-lg p-3 bg-purple-50">
+                                            <div class="flex items-center justify-between mb-1">
+                                                <span class="text-xs font-medium text-purple-600">${note.type} Note</span>
+                                                <span class="text-xs text-gray-500">${new Date(note.generatedAt).toLocaleDateString('en-GB')}</span>
+                                            </div>
+                                            <p class="text-sm text-gray-700 truncate">${note.subjective?.substring(0, 100)}...</p>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `}
+                        </div>
+
+                        ${patient.medicalHistory ? `
+                            <div class="bg-amber-50 rounded-xl p-4 border border-amber-200">
+                                <h4 class="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                                    <i class="fa-solid fa-notes-medical text-amber-500"></i>
+                                    Medical History
+                                </h4>
+                                <p class="text-sm text-gray-700 whitespace-pre-wrap">${patient.medicalHistory}</p>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    } catch (err) {
+        console.error('Error loading patient profile:', err);
+        alert('Failed to load patient profile');
+    }
+}
+
+function bookForPatient(patientId) {
+    const patient = patients.find(p => p.id === patientId);
+    if (!patient) return;
+
+    showBookAppointmentModal();
+    // Pre-select the patient after modal opens
+    setTimeout(() => {
+        const select = document.getElementById('apt-patient');
+        if (select) select.value = patientId;
+    }, 100);
 }
 
 function renderAgents() {

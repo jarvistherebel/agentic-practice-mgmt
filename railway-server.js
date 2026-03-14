@@ -270,14 +270,187 @@ app.delete('/api/services/:id', (req, res) => {
   res.status(204).send();
 });
 
-app.get('/api/patients', (req, res) => res.json(db.getPatients()));
+// ==================== PATIENT CRM SYSTEM ====================
 
+// Get all patients with optional search
+app.get('/api/patients', (req, res) => {
+  const { search, status } = req.query;
+  let patients = db.getPatients();
+
+  if (search) {
+    const searchLower = search.toLowerCase();
+    patients = patients.filter(p =>
+      p.firstName.toLowerCase().includes(searchLower) ||
+      p.lastName.toLowerCase().includes(searchLower) ||
+      p.email.toLowerCase().includes(searchLower) ||
+      p.phone.includes(search)
+    );
+  }
+
+  if (status) {
+    patients = patients.filter(p => p.status === status);
+  }
+
+  // Enrich with appointment counts
+  const enriched = patients.map(p => {
+    const appointments = db.getAppointments({ patientId: p.id });
+    const lastAppointment = appointments
+      .filter(a => a.date < format(new Date(), 'yyyy-MM-dd'))
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    const nextAppointment = appointments
+      .filter(a => a.date >= format(new Date(), 'yyyy-MM-dd') && a.status === 'confirmed')
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+
+    return {
+      ...p,
+      totalAppointments: appointments.length,
+      lastAppointment,
+      nextAppointment
+    };
+  });
+
+  res.json(enriched);
+});
+
+// Create new patient
+app.post('/api/patients', (req, res) => {
+  const {
+    firstName, lastName, phone, email, dateOfBirth, gender, address,
+    emergencyContactName, emergencyContactPhone, insuranceProvider, insuranceNumber,
+    referredBy, notes, medicalHistory, allergies, medications
+  } = req.body;
+
+  if (!firstName || !lastName) {
+    return res.status(400).json({ error: 'First name and last name are required' });
+  }
+
+  const patient = db.createPatient({
+    firstName, lastName, phone, email, dateOfBirth, gender, address,
+    emergencyContactName, emergencyContactPhone, insuranceProvider, insuranceNumber,
+    referredBy, notes, medicalHistory, allergies, medications
+  });
+
+  db.createAgentActivity({
+    agentType: 'patient_comms',
+    action: `New patient registered: ${firstName} ${lastName}`,
+    patientId: patient.id,
+    status: 'completed'
+  });
+
+  res.status(201).json(patient);
+});
+
+// Get single patient with full details
 app.get('/api/patients/:id', (req, res) => {
   const patient = db.getPatient(req.params.id);
   if (!patient) return res.status(404).json({ error: 'Patient not found' });
-  const patientAppointments = db.getAppointments({ patientId: patient.id });
-  const patientNotes = db.getNotes({ patientId: patient.id });
-  res.json({ ...patient, appointments: patientAppointments, notes: patientNotes });
+
+  const appointments = db.getAppointments({ patientId: patient.id });
+  const notes = db.getNotes({ patientId: patient.id });
+  const communications = db.getPatientCommunications(patient.id);
+  const documents = db.getPatientDocuments(patient.id);
+
+  // Calculate stats
+  const totalAppointments = appointments.length;
+  const completedAppointments = appointments.filter(a => a.status === 'completed').length;
+  const cancelledAppointments = appointments.filter(a => a.status === 'cancelled').length;
+  const totalSpent = appointments.reduce((sum, a) => {
+    const service = db.getService(a.serviceId);
+    return sum + (service?.price || 0);
+  }, 0);
+
+  res.json({
+    ...patient,
+    appointments: appointments.map(a => ({
+      ...a,
+      practitioner: db.getPractitioner(a.practitionerId),
+      service: db.getService(a.serviceId)
+    })),
+    notes,
+    communications,
+    documents,
+    stats: {
+      totalAppointments,
+      completedAppointments,
+      cancelledAppointments,
+      totalSpent,
+      notesCount: notes.length
+    }
+  });
+});
+
+// Update patient
+app.patch('/api/patients/:id', (req, res) => {
+  const patient = db.updatePatient(req.params.id, req.body);
+  if (!patient) return res.status(404).json({ error: 'Patient not found' });
+  res.json(patient);
+});
+
+// Delete patient
+app.delete('/api/patients/:id', (req, res) => {
+  // Check for appointments
+  const appointments = db.getAppointments({ patientId: req.params.id });
+  if (appointments.length > 0) {
+    return res.status(400).json({
+      error: 'Cannot delete patient with appointment history',
+      appointments: appointments.length
+    });
+  }
+
+  db.deletePatient(req.params.id);
+  res.status(204).send();
+});
+
+// Get patient timeline (all activities)
+app.get('/api/patients/:id/timeline', (req, res) => {
+  const patient = db.getPatient(req.params.id);
+  if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+  const appointments = db.getAppointments({ patientId: patient.id })
+    .map(a => ({ ...a, type: 'appointment', practitioner: db.getPractitioner(a.practitionerId), service: db.getService(a.serviceId) }));
+  const notes = db.getNotes({ patientId: patient.id })
+    .map(n => ({ ...n, type: 'note' }));
+  const communications = db.getPatientCommunications(patient.id)
+    .map(c => ({ ...c, type: 'communication' }));
+
+  // Combine and sort by date
+  const timeline = [...appointments, ...notes, ...communications]
+    .sort((a, b) => {
+      const dateA = a.date || a.generatedAt || a.sentAt;
+      const dateB = b.date || b.generatedAt || b.sentAt;
+      return new Date(dateB) - new Date(dateA);
+    });
+
+  res.json(timeline);
+});
+
+// Add patient communication
+app.post('/api/patients/:id/communications', (req, res) => {
+  const { type, direction, content } = req.body;
+
+  const communication = db.createPatientCommunication({
+    patientId: req.params.id,
+    type,
+    direction,
+    content
+  });
+
+  res.status(201).json(communication);
+});
+
+// Add patient document
+app.post('/api/patients/:id/documents', (req, res) => {
+  const { title, type, fileUrl, content } = req.body;
+
+  const document = db.createPatientDocument({
+    patientId: req.params.id,
+    title,
+    type,
+    fileUrl,
+    content
+  });
+
+  res.status(201).json(document);
 });
 
 // ==================== APPOINTMENT/BOOKING SYSTEM ====================

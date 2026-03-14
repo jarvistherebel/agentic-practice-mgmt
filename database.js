@@ -51,10 +51,42 @@ class DatabaseManager {
         phone TEXT,
         email TEXT,
         dateOfBirth TEXT,
+        gender TEXT,
+        address TEXT,
+        emergencyContactName TEXT,
+        emergencyContactPhone TEXT,
+        insuranceProvider TEXT,
+        insuranceNumber TEXT,
+        referredBy TEXT,
         status TEXT DEFAULT 'active',
         notes TEXT,
+        medicalHistory TEXT,
+        allergies TEXT,
+        medications TEXT,
         createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
         updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS patientCommunications (
+        id TEXT PRIMARY KEY,
+        patientId TEXT NOT NULL,
+        type TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        content TEXT NOT NULL,
+        sentAt TEXT DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'sent',
+        FOREIGN KEY (patientId) REFERENCES patients(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS patientDocuments (
+        id TEXT PRIMARY KEY,
+        patientId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        type TEXT NOT NULL,
+        fileUrl TEXT,
+        content TEXT,
+        uploadedAt TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (patientId) REFERENCES patients(id)
       );
 
       CREATE TABLE IF NOT EXISTS appointments (
@@ -227,11 +259,97 @@ class DatabaseManager {
   createPatient(data) {
     const id = data.id || uuidv4();
     const stmt = this.db.prepare(`
-      INSERT INTO patients (id, firstName, lastName, phone, email, dateOfBirth, status, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO patients (id, firstName, lastName, phone, email, dateOfBirth, gender, address, 
+        emergencyContactName, emergencyContactPhone, insuranceProvider, insuranceNumber, 
+        referredBy, status, notes, medicalHistory, allergies, medications)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(id, data.firstName, data.lastName, data.phone || '', data.email || '', data.dateOfBirth || '', data.status || 'active', data.notes || '');
+    stmt.run(
+      id, 
+      data.firstName, 
+      data.lastName, 
+      data.phone || '', 
+      data.email || '', 
+      data.dateOfBirth || '',
+      data.gender || '',
+      data.address || '',
+      data.emergencyContactName || '',
+      data.emergencyContactPhone || '',
+      data.insuranceProvider || '',
+      data.insuranceNumber || '',
+      data.referredBy || '',
+      data.status || 'active', 
+      data.notes || '',
+      data.medicalHistory || '',
+      data.allergies || '',
+      data.medications || ''
+    );
     return this.getPatient(id);
+  }
+
+  updatePatient(id, data) {
+    const fields = [];
+    const values = [];
+    
+    const fieldMap = {
+      firstName: 'firstName', lastName: 'lastName', phone: 'phone', email: 'email',
+      dateOfBirth: 'dateOfBirth', gender: 'gender', address: 'address',
+      emergencyContactName: 'emergencyContactName', emergencyContactPhone: 'emergencyContactPhone',
+      insuranceProvider: 'insuranceProvider', insuranceNumber: 'insuranceNumber',
+      referredBy: 'referredBy', status: 'status', notes: 'notes',
+      medicalHistory: 'medicalHistory', allergies: 'allergies', medications: 'medications'
+    };
+    
+    for (const [key, dbField] of Object.entries(fieldMap)) {
+      if (data[key] !== undefined) {
+        fields.push(`${dbField} = ?`);
+        values.push(data[key]);
+      }
+    }
+    
+    if (fields.length === 0) return this.getPatient(id);
+    
+    fields.push('updatedAt = CURRENT_TIMESTAMP');
+    values.push(id);
+    
+    const stmt = this.db.prepare(`UPDATE patients SET ${fields.join(', ')} WHERE id = ?`);
+    stmt.run(...values);
+    return this.getPatient(id);
+  }
+
+  deletePatient(id) {
+    const stmt = this.db.prepare('DELETE FROM patients WHERE id = ?');
+    return stmt.run(id);
+  }
+
+  // Patient Communications
+  getPatientCommunications(patientId) {
+    return this.db.prepare('SELECT * FROM patientCommunications WHERE patientId = ? ORDER BY sentAt DESC').all(patientId);
+  }
+
+  createPatientCommunication(data) {
+    const id = uuidv4();
+    const stmt = this.db.prepare(`
+      INSERT INTO patientCommunications (id, patientId, type, direction, content, status)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(id, data.patientId, data.type, data.direction, data.content, data.status || 'sent');
+    return { id, ...data };
+  }
+
+  // Patient Documents
+  getPatientDocuments(patientId) {
+    return this.db.prepare('SELECT * FROM patientDocuments WHERE patientId = ? ORDER BY uploadedAt DESC').all(patientId);
+  }
+
+  createPatientDocument(data) {
+    const id = uuidv4();
+    const stmt = this.db.prepare(`
+      INSERT INTO patientDocuments (id, patientId, title, type, fileUrl, content)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(id, data.patientId, data.title, data.type, data.fileUrl || '', data.content || '');
+    return { id, ...data };
   }
 
   // Appointments
