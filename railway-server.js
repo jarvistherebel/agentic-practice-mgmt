@@ -3,14 +3,65 @@ const cors = require('cors');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { format, addDays } = require('date-fns');
+const fs = require('fs');
+const https = require('https');
+const FormData = require('form-data');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// OpenAI API configuration
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_API_URL = 'https://api.openai.com/v1';
+
+// Helper function to make OpenAI API requests
+async function openAIRequest(endpoint, data, isFormData = false) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'api.openai.com',
+      path: endpoint,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`
+      }
+    };
+
+    if (!isFormData) {
+      options.headers['Content-Type'] = 'application/json';
+    }
+
+    const req = https.request(options, (res) => {
+      let responseData = '';
+      res.on('data', (chunk) => responseData += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(responseData);
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(parsed);
+          } else {
+            reject(new Error(parsed.error?.message || `HTTP ${res.statusCode}`));
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+
+    req.on('error', reject);
+
+    if (isFormData) {
+      data.pipe(req);
+    } else {
+      req.write(JSON.stringify(data));
+      req.end();
+    }
+  });
+}
 
 // In-memory data store
 const db = {
@@ -186,28 +237,260 @@ app.get('/api/agent-activities', (req, res) => {
   res.json(activities);
 });
 
-app.post('/api/generate-note', (req, res) => {
-  const { appointmentId } = req.body;
-  const note = {
-    id: uuidv4(),
-    appointmentId,
-    type: 'SOAP',
-    subjective: 'Patient reports continued improvement in knee mobility. Pain level reduced from 6/10 to 3/10.',
-    objective: 'ROM: Knee flexion 0-125° (improved from 110°). Gait normal. No swelling observed.',
-    assessment: 'Good progress with rehabilitation. Patient responding well to treatment protocol.',
-    plan: 'Continue with current exercise program. Schedule follow-up in 2 weeks.',
-    generatedAt: new Date(),
-    status: 'draft'
-  };
-  db.notes.push(note);
-  db.agentActivities.unshift({
-    id: uuidv4(),
-    agentType: 'documentation',
-    action: 'Generated SOAP note from session',
-    timestamp: new Date(),
-    status: 'completed'
+// Transcribe audio using Whisper API
+app.post('/api/transcribe', async (req, res) => {
+  if (!OPENAI_API_KEY) {
+    return res.status(500).json({ error: 'OpenAI API key not configured' });
+  }
+
+  try {
+    const { audioBase64, appointmentId } = req.body;
+    
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'No audio data provided' });
+    }
+
+    // Convert base64 to buffer
+    const audioBuffer = Buffer.from(audioBase64, 'base64');
+    const tempFile = `/tmp/audio-${Date.now()}.webm`;
+    
+    // Write to temp file
+    fs.writeFileSync(tempFile, audioBuffer);
+
+    // Create form data for Whisper API
+    const form = new FormData();
+    form.append('file', fs.createReadStream(tempFile), { filename: 'audio.webm', contentType: 'audio/webm' });
+    form.append('model', 'whisper-1');
+    form.append('language', 'en');
+
+    // Make request to Whisper API
+    const response = await new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'api.openai.com',
+        path: '/v1/audio/transcriptions',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          ...form.getHeaders()
+        }
+      };
+
+      const request = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              resolve(parsed);
+            } else {
+              reject(new Error(parsed.error?.message || `HTTP ${res.statusCode}`));
+            }
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+
+      request.on('error', reject);
+      form.pipe(request);
+    });
+
+    // Clean up temp file
+    fs.unlinkSync(tempFile);
+
+    // Log the transcription activity
+    db.agentActivities.unshift({
+      id: uuidv4(),
+      agentType: 'documentation',
+      action: 'Transcribed session audio with Whisper',
+      patientId: appointmentId ? db.appointments.find(a => a.id === appointmentId)?.patientId : null,
+      timestamp: new Date(),
+      status: 'completed'
+    });
+
+    res.json({
+      transcript: response.text,
+      duration: response.duration || null,
+      language: response.language || 'en'
+    });
+
+  } catch (error) {
+    console.error('Transcription error:', error);
+    res.status(500).json({ error: error.message || 'Transcription failed' });
+  }
+});
+
+// Generate SOAP note from transcript using GPT-4o
+app.post('/api/generate-note', async (req, res) => {
+  if (!OPENAI_API_KEY) {
+    // Fallback to mock data if no API key
+    const { appointmentId } = req.body;
+    const note = {
+      id: uuidv4(),
+      appointmentId,
+      type: 'SOAP',
+      subjective: 'Patient reports continued improvement in knee mobility. Pain level reduced from 6/10 to 3/10.',
+      objective: 'ROM: Knee flexion 0-125° (improved from 110°). Gait normal. No swelling observed.',
+      assessment: 'Good progress with rehabilitation. Patient responding well to treatment protocol.',
+      plan: 'Continue with current exercise program. Schedule follow-up in 2 weeks.',
+      generatedAt: new Date(),
+      status: 'draft',
+      source: 'mock'
+    };
+    db.notes.push(note);
+    db.agentActivities.unshift({
+      id: uuidv4(),
+      agentType: 'documentation',
+      action: 'Generated SOAP note from session',
+      timestamp: new Date(),
+      status: 'completed'
+    });
+    return res.json(note);
+  }
+
+  try {
+    const { appointmentId, transcript, patientContext } = req.body;
+    
+    if (!transcript) {
+      return res.status(400).json({ error: 'No transcript provided' });
+    }
+
+    // Get appointment details for context
+    const appointment = db.appointments.find(a => a.id === appointmentId);
+    const patient = appointment ? db.patients.find(p => p.id === appointment.patientId) : null;
+    const practitioner = appointment ? db.practitioners.find(p => p.id === appointment.practitionerId) : null;
+    const service = appointment ? db.services.find(s => s.id === appointment.serviceId) : null;
+
+    // Build the prompt for GPT-4o
+    const systemPrompt = `You are an expert physiotherapy documentation assistant. Generate a professional SOAP note from the session transcript.
+
+SOAP Note Structure:
+- Subjective: Patient's reported symptoms, pain levels, history, concerns
+- Objective: Measurable findings, ROM tests, observations, assessments performed
+- Assessment: Clinical interpretation, diagnosis, progress evaluation
+- Plan: Treatment provided, exercises prescribed, next steps, follow-up
+
+Guidelines:
+- Use professional medical terminology
+- Be concise but thorough
+- Include specific measurements where mentioned
+- Note any changes from previous sessions
+- Flag any concerns for follow-up`;
+
+    const userPrompt = `Generate a SOAP note from this physiotherapy session transcript:
+
+${transcript}
+
+${patient ? `Patient: ${patient.firstName} ${patient.lastName}` : ''}
+${service ? `Service: ${service.name}` : ''}
+${practitioner ? `Practitioner: ${practitioner.name}` : ''}
+${patientContext ? `Additional Context: ${patientContext}` : ''}
+
+Provide the note in JSON format with fields: subjective, objective, assessment, plan`;
+
+    // Call GPT-4o
+    const response = await openAIRequest('/chat/completions', {
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' }
+    });
+
+    const noteContent = JSON.parse(response.choices[0].message.content);
+
+    const note = {
+      id: uuidv4(),
+      appointmentId,
+      patientId: patient?.id,
+      type: 'SOAP',
+      subjective: noteContent.subjective || '',
+      objective: noteContent.objective || '',
+      assessment: noteContent.assessment || '',
+      plan: noteContent.plan || '',
+      transcript,
+      generatedAt: new Date(),
+      status: 'draft',
+      source: 'ai',
+      model: 'gpt-4o'
+    };
+
+    db.notes.push(note);
+    db.agentActivities.unshift({
+      id: uuidv4(),
+      agentType: 'documentation',
+      action: `Generated SOAP note with GPT-4o for ${patient ? patient.firstName + ' ' + patient.lastName : 'patient'}`,
+      patientId: patient?.id,
+      timestamp: new Date(),
+      status: 'completed'
+    });
+
+    res.json(note);
+
+  } catch (error) {
+    console.error('Note generation error:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate note' });
+  }
+});
+
+// Get all notes for a patient
+app.get('/api/notes', (req, res) => {
+  const { patientId, appointmentId } = req.query;
+  let notes = db.notes;
+  
+  if (patientId) notes = notes.filter(n => n.patientId === patientId);
+  if (appointmentId) notes = notes.filter(n => n.appointmentId === appointmentId);
+  
+  // Enrich with patient info
+  const enriched = notes.map(n => ({
+    ...n,
+    patient: n.patientId ? db.patients.find(p => p.id === n.patientId) : null,
+    appointment: n.appointmentId ? db.appointments.find(a => a.id === n.appointmentId) : null
+  }));
+  
+  res.json(enriched);
+});
+
+// Get single note
+app.get('/api/notes/:id', (req, res) => {
+  const note = db.notes.find(n => n.id === req.params.id);
+  if (!note) return res.status(404).json({ error: 'Note not found' });
+  
+  res.json({
+    ...note,
+    patient: note.patientId ? db.patients.find(p => p.id === note.patientId) : null,
+    appointment: note.appointmentId ? db.appointments.find(a => a.id === note.appointmentId) : null
   });
+});
+
+// Update note (for editing/saving)
+app.patch('/api/notes/:id', (req, res) => {
+  const note = db.notes.find(n => n.id === req.params.id);
+  if (!note) return res.status(404).json({ error: 'Note not found' });
+  
+  const { subjective, objective, assessment, plan, status } = req.body;
+  
+  if (subjective !== undefined) note.subjective = subjective;
+  if (objective !== undefined) note.objective = objective;
+  if (assessment !== undefined) note.assessment = assessment;
+  if (plan !== undefined) note.plan = plan;
+  if (status !== undefined) note.status = status;
+  
+  note.updatedAt = new Date();
+  
   res.json(note);
+});
+
+// Delete note
+app.delete('/api/notes/:id', (req, res) => {
+  const index = db.notes.findIndex(n => n.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: 'Note not found' });
+  
+  db.notes.splice(index, 1);
+  res.status(204).send();
 });
 
 app.get('/api/availability', (req, res) => {

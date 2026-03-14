@@ -10,6 +10,14 @@ let services = [];
 let patients = [];
 let appointments = [];
 let agentActivities = [];
+let notes = [];
+
+// Audio recording state
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+let recordingStartTime = null;
+let recordingTimer = null;
 
 // Initialize
 async function init() {
@@ -62,6 +70,7 @@ function render() {
                     ${currentView === 'patients' ? renderPatients() : ''}
                     ${currentView === 'agents' ? renderAgents() : ''}
                     ${currentView === 'voice' ? renderVoiceAI() : ''}
+                    ${currentView === 'notes' ? renderNotes() : ''}
                 </main>
             </div>
         </div>
@@ -73,6 +82,7 @@ function renderSidebar() {
         { id: 'dashboard', icon: 'fa-chart-line', label: 'Dashboard' },
         { id: 'calendar', icon: 'fa-calendar', label: 'Calendar' },
         { id: 'patients', icon: 'fa-users', label: 'Patients' },
+        { id: 'notes', icon: 'fa-file-medical', label: 'Notes', badge: 'AI' },
         { id: 'voice', icon: 'fa-phone', label: 'Voice AI', badge: 'LIVE' },
         { id: 'agents', icon: 'fa-robot', label: 'AI Agents' },
     ];
@@ -558,6 +568,347 @@ function getAgentIcon(type) {
 function navigate(view) {
     currentView = view;
     render();
+    
+    // Load notes data when navigating to notes view
+    if (view === 'notes') {
+        loadNotes();
+    }
+}
+
+// Load notes from API
+async function loadNotes() {
+    try {
+        const res = await fetch('/api/notes');
+        notes = await res.json();
+        renderNotes();
+    } catch (err) {
+        console.error('Failed to load notes:', err);
+    }
+}
+
+// Notes View
+function renderNotes() {
+    const pendingAppointments = appointments.filter(a => a.status === 'completed' && !notes.find(n => n.appointmentId === a.id));
+    
+    return `
+        <div class="space-y-6">
+            <!-- Audio Recording Card -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-bold text-gray-800 flex items-center gap-2">
+                        <i class="fa-solid fa-microphone text-purple-500"></i>
+                        Record Session Audio
+                    </h3>
+                    <span class="text-xs text-gray-500">Powered by Whisper AI</span>
+                </div>
+                
+                <div class="bg-gray-50 rounded-xl p-6 text-center">
+                    <div id="recording-status" class="mb-4">
+                        ${isRecording ? `
+                            <div class="flex items-center justify-center gap-2 text-red-500">
+                                <div class="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                                <span class="font-medium">Recording... <span id="recording-time">00:00</span></span>
+                            </div>
+                        ` : '<span class="text-gray-500">Click to start recording session audio</span>'}
+                    </div>
+                    
+                    <div class="flex items-center justify-center gap-4">
+                        <button 
+                            onclick="${isRecording ? 'stopRecording()' : 'startRecording()'}"
+                            class="w-16 h-16 rounded-full ${isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-purple-500 hover:bg-purple-600'} text-white flex items-center justify-center transition-all shadow-lg hover:shadow-xl"
+                        >
+                            <i class="fa-solid ${isRecording ? 'fa-stop' : 'fa-microphone'} text-2xl"></i>
+                        </button>
+                    </div>
+                    
+                    <div id="transcription-result" class="mt-4 hidden">
+                        <div class="bg-white rounded-lg p-4 border border-gray-200 text-left">
+                            <p class="text-sm font-medium text-gray-700 mb-2">Transcript:</p>
+                            <p id="transcript-text" class="text-sm text-gray-600"></p>
+                            <div id="note-generation-status" class="mt-3 hidden">
+                                <div class="flex items-center gap-2 text-purple-600">
+                                    <i class="fa-solid fa-spinner fa-spin"></i>
+                                    <span class="text-sm">Generating SOAP note with GPT-4o...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Pending Notes -->
+            ${pendingAppointments.length > 0 ? `
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100">
+                    <div class="p-6 border-b border-gray-100">
+                        <h3 class="font-bold text-gray-800">Pending Notes (${pendingAppointments.length})</h3>
+                        <p class="text-sm text-gray-500 mt-1">Appointments that need documentation</p>
+                    </div>
+                    <div class="p-6 space-y-3">
+                        ${pendingAppointments.map(apt => `
+                            <div class="flex items-center justify-between p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                                        <i class="fa-solid fa-file-medical text-amber-600"></i>
+                                    </div>
+                                    <div>
+                                        <p class="font-medium text-gray-800">${apt.patient?.firstName} ${apt.patient?.lastName}</p>
+                                        <p class="text-sm text-gray-500">${apt.service?.name} • ${apt.date} at ${apt.time}</p>
+                                    </div>
+                                </div>
+                                <button onclick="generateNoteForAppointment('${apt.id}')" class="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors">
+                                    <i class="fa-solid fa-wand-magic-sparkles mr-2"></i>Generate Note
+                                </button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : ''}
+            
+            <!-- Recent Notes -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100">
+                <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                    <h3 class="font-bold text-gray-800">Recent Notes</h3>
+                    <span class="text-sm text-gray-500">${notes.length} total</span>
+                </div>
+                <div class="p-6 space-y-4">
+                    ${notes.length === 0 ? `
+                        <div class="text-center py-8 text-gray-500">
+                            <i class="fa-solid fa-file-medical text-4xl mb-3 text-gray-300"></i>
+                            <p>No notes yet. Record session audio to generate AI-powered SOAP notes.</p>
+                        </div>
+                    ` : notes.slice(0, 10).map(note => `
+                        <div class="border border-gray-200 rounded-lg p-4 hover:border-purple-300 transition-colors cursor-pointer" onclick="viewNote('${note.id}')">
+                            <div class="flex items-start justify-between mb-3">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
+                                        <i class="fa-solid fa-file-medical text-purple-600"></i>
+                                    </div>
+                                    <div>
+                                        <p class="font-medium text-gray-800">${note.patient?.firstName} ${note.patient?.lastName || 'Unknown Patient'}</p>
+                                        <p class="text-sm text-gray-500">${new Date(note.generatedAt).toLocaleDateString('en-GB')} • ${note.type} Note</p>
+                                    </div>
+                                </div>
+                                <span class="px-2 py-1 rounded-full text-xs font-medium ${note.status === 'final' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}">
+                                    ${note.status}
+                                </span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3 text-sm">
+                                <div class="bg-gray-50 rounded p-2">
+                                    <span class="text-gray-500 text-xs">Subjective:</span>
+                                    <p class="text-gray-700 truncate">${note.subjective?.substring(0, 60)}...</p>
+                                </div>
+                                <div class="bg-gray-50 rounded p-2">
+                                    <span class="text-gray-500 text-xs">Assessment:</span>
+                                    <p class="text-gray-700 truncate">${note.assessment?.substring(0, 60)}...</p>
+                                </div>
+                            </div>
+                            ${note.source === 'ai' ? `
+                                <div class="mt-3 flex items-center gap-2 text-xs text-purple-600">
+                                    <i class="fa-solid fa-robot"></i>
+                                    Generated with GPT-4o
+                                </div>
+                            ` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Audio Recording Functions
+async function startRecording() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioChunks.push(event.data);
+            }
+        };
+        
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            await processAudioRecording(audioBlob);
+        };
+        
+        mediaRecorder.start();
+        isRecording = true;
+        recordingStartTime = Date.now();
+        
+        // Update UI
+        renderNotes();
+        startRecordingTimer();
+        
+    } catch (err) {
+        console.error('Failed to start recording:', err);
+        alert('Could not access microphone. Please ensure you have granted permission.');
+    }
+}
+
+function stopRecording() {
+    if (mediaRecorder && isRecording) {
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        isRecording = false;
+        clearInterval(recordingTimer);
+        renderNotes();
+    }
+}
+
+function startRecordingTimer() {
+    recordingTimer = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+        const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+        const seconds = (elapsed % 60).toString().padStart(2, '0');
+        const timerEl = document.getElementById('recording-time');
+        if (timerEl) timerEl.textContent = `${minutes}:${seconds}`;
+    }, 1000);
+}
+
+async function processAudioRecording(audioBlob) {
+    const resultDiv = document.getElementById('transcription-result');
+    const transcriptText = document.getElementById('transcript-text');
+    const noteStatus = document.getElementById('note-generation-status');
+    
+    resultDiv.classList.remove('hidden');
+    transcriptText.textContent = 'Transcribing with Whisper AI...';
+    
+    try {
+        // Convert blob to base64
+        const reader = new FileReader();
+        const base64Audio = await new Promise((resolve) => {
+            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+            reader.readAsDataURL(audioBlob);
+        });
+        
+        // Send to transcription API
+        const transcribeRes = await fetch('/api/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audioBase64: base64Audio })
+        });
+        
+        if (!transcribeRes.ok) {
+            const error = await transcribeRes.json();
+            throw new Error(error.error || 'Transcription failed');
+        }
+        
+        const { transcript } = await transcribeRes.json();
+        transcriptText.textContent = transcript;
+        
+        // Generate SOAP note
+        noteStatus.classList.remove('hidden');
+        
+        const noteRes = await fetch('/api/generate-note', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transcript })
+        });
+        
+        if (!noteRes.ok) {
+            const error = await noteRes.json();
+            throw new Error(error.error || 'Note generation failed');
+        }
+        
+        const note = await noteRes.json();
+        
+        // Reload notes and show success
+        await loadNotes();
+        
+        // Show the generated note
+        viewNote(note.id);
+        
+    } catch (err) {
+        console.error('Processing error:', err);
+        transcriptText.textContent = `Error: ${err.message}`;
+        noteStatus.classList.add('hidden');
+    }
+}
+
+async function generateNoteForAppointment(appointmentId) {
+    // This would be used to generate a note from an existing appointment
+    // For now, we'll just show an alert
+    alert('This would generate a note from the appointment data. In a full implementation, you could upload audio for past appointments.');
+}
+
+function viewNote(noteId) {
+    const note = notes.find(n => n.id === noteId);
+    if (!note) return;
+    
+    // Create modal to view/edit note
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    modal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-auto">
+            <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                    <h3 class="text-xl font-bold text-gray-800">SOAP Note</h3>
+                    <p class="text-sm text-gray-500">${note.patient?.firstName} ${note.patient?.lastName} • ${new Date(note.generatedAt).toLocaleDateString('en-GB')}</p>
+                </div>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa-solid fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Subjective</label>
+                    <textarea id="note-subjective" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent" rows="3">${note.subjective}</textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Objective</label>
+                    <textarea id="note-objective" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent" rows="3">${note.objective}</textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Assessment</label>
+                    <textarea id="note-assessment" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent" rows="3">${note.assessment}</textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Plan</label>
+                    <textarea id="note-plan" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent" rows="3">${note.plan}</textarea>
+                </div>
+                ${note.transcript ? `
+                    <div class="bg-gray-50 rounded-lg p-4">
+                        <p class="text-sm font-medium text-gray-700 mb-2">Original Transcript</p>
+                        <p class="text-sm text-gray-600">${note.transcript}</p>
+                    </div>
+                ` : ''}
+            </div>
+            <div class="p-6 border-t border-gray-100 flex justify-end gap-3">
+                <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">Close</button>
+                <button onclick="saveNote('${note.id}')" class="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600">Save Changes</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+async function saveNote(noteId) {
+    const subjective = document.getElementById('note-subjective').value;
+    const objective = document.getElementById('note-objective').value;
+    const assessment = document.getElementById('note-assessment').value;
+    const plan = document.getElementById('note-plan').value;
+    
+    try {
+        const res = await fetch(`/api/notes/${noteId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subjective, objective, assessment, plan, status: 'final' })
+        });
+        
+        if (res.ok) {
+            // Close modal and reload
+            document.querySelector('.fixed').remove();
+            await loadNotes();
+        } else {
+            alert('Failed to save note');
+        }
+    } catch (err) {
+        console.error('Save error:', err);
+        alert('Failed to save note');
+    }
 }
 
 // Start the app
